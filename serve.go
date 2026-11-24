@@ -53,6 +53,7 @@ func (p *Plugin) Serve(ctx context.Context, in io.Reader, out io.Writer, logw io
 		out:     bufio.NewWriter(out),
 		log:     NewLogger(logw),
 		running: map[string]context.CancelFunc{},
+		streams: map[int64]*Stream{},
 	}
 	concurrency := max(p.Concurrency, 1)
 	s.slots = make(chan struct{}, concurrency)
@@ -108,6 +109,7 @@ type server struct {
 	initialized bool
 	hostVersion string
 	running     map[string]context.CancelFunc
+	streams     map[int64]*Stream
 }
 
 type message struct {
@@ -183,6 +185,12 @@ func (s *server) handle(ctx context.Context, line []byte) {
 		s.execute(ctx, m)
 	case "connection.test":
 		s.testConnection(ctx, m)
+	case "transform.open":
+		s.openStream(ctx, m)
+	case "transform.init":
+		s.initTransform(ctx, m)
+	case "transform.detectFields":
+		s.detectFields(ctx, m)
 	case "shutdown":
 		s.reply(m.ID, nil)
 	default:
@@ -191,7 +199,12 @@ func (s *server) handle(ctx context.Context, line []byte) {
 }
 
 func (s *server) notification(m message) {
-	if m.Method != "$/cancelRequest" {
+	switch m.Method {
+	case "transform.batch", "transform.end", "$/ack":
+		s.streamMessage(m)
+		return
+	case "$/cancelRequest":
+	default:
 		return // unknown notifications are ignored
 	}
 	var p struct {
@@ -234,6 +247,13 @@ func (s *server) describe(m message) {
 		actions = append(actions, a.descriptor)
 	}
 	result := map[string]any{"actions": actions}
+	if len(s.p.transforms) > 0 {
+		ts := make([]transformDescriptor, 0, len(s.p.transforms))
+		for _, t := range s.p.transforms {
+			ts = append(ts, t.descriptor)
+		}
+		result["transforms"] = ts
+	}
 	if len(s.p.connections) > 0 {
 		conns := make([]connectionDescriptor, 0, len(s.p.connections))
 		for _, c := range s.p.connections {

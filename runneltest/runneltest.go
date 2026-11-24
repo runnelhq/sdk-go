@@ -40,6 +40,8 @@ type Client struct {
 	nextID  int
 	waiting map[int]chan response
 	log     []string
+	streams map[int64]*clientStream
+	stream  int64
 	ended   chan struct{}
 	err     error
 
@@ -84,7 +86,7 @@ func Start(t testing.TB, p *runnel.Plugin) *Client {
 	inR, inW := io.Pipe()
 	outR, outW := io.Pipe()
 	logR, logW := io.Pipe()
-	c := &Client{t: t, in: inW, waiting: map[int]chan response{}, ended: make(chan struct{})}
+	c := &Client{t: t, in: inW, waiting: map[int]chan response{}, streams: map[int64]*clientStream{}, ended: make(chan struct{})}
 	go func() {
 		err := p.Serve(context.Background(), inR, outW, logW)
 		c.mu.Lock()
@@ -133,8 +135,10 @@ func (c *Client) readAnswers(r io.Reader) {
 	sc.Buffer(make([]byte, 0, 64<<10), runnel.MaxMessageSize+2)
 	for sc.Scan() {
 		var m struct {
-			JSONRPC string `json:"jsonrpc"`
-			ID      *int   `json:"id"`
+			JSONRPC string          `json:"jsonrpc"`
+			ID      *int            `json:"id"`
+			Method  string          `json:"method"`
+			Params  json.RawMessage `json:"params"`
 			response
 		}
 		if err := json.Unmarshal(sc.Bytes(), &m); err != nil || m.JSONRPC != "2.0" {
@@ -142,6 +146,7 @@ func (c *Client) readAnswers(r io.Reader) {
 			continue
 		}
 		if m.ID == nil {
+			c.streamNotification(m.Method, m.Params)
 			continue
 		}
 		c.mu.Lock()

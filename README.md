@@ -10,9 +10,8 @@ von Runnel, nicht dieses SDK.
 | | |
 |---|---|
 | Modul | `github.com/runnelhq/sdk-go`, Paket `runnel` |
-| Protokoll | Version 1: `initialize`, `describe`, `action.execute`, `connection.test`, `$/cancelRequest`, `shutdown` |
-| Runnel | ab S49c (Actions und Connection-Typen aus Plugins) |
-| Noch nicht | Transforms in Pipelines (`transform.open/batch/end`, Kredite) – folgen, sobald Runnel sie anbietet (S50) |
+| Protokoll | Version 1: `initialize`, `describe`, `action.execute`, `connection.test`, Transforms als Strom (`transform.open/batch/end/emit/closed`, `$/ack`), `transform.init`, `transform.detectFields`, `$/cancelRequest`, `shutdown` |
+| Runnel | Actions und Connection-Typen ab S49c, Transforms ab S50a, `init`/`detectFields` ab S50b |
 | Lizenz | MIT |
 
 ## Ein Plugin in fünf Minuten
@@ -47,7 +46,7 @@ func main() {
 }
 ```
 
-Das vollständige Beispiel mit Tests liegt in [`examples/hello`](examples/hello). Bauen und im Projekt ablegen:
+Das vollständige Beispiel mit Tests – Action und Transform `hello.greet` – liegt in [`examples/hello`](examples/hello). Bauen und im Projekt ablegen:
 
 ```bash
 go build -o D:/flows/plugins/hello/bin/hello.exe ./examples/hello   # GOOS=windows für Windows
@@ -111,6 +110,67 @@ type searchConfig struct {
 - `Test` ist optional; damit bietet der Editor „Test connection“ an. Ein Fehler zählt als gescheiterter Test.
 - Secrets kommen im Klartext an. Runnel maskiert sie in allem, was vom Plugin zurückkommt; trotzdem nicht loggen.
 
+## Transforms
+
+Ein Transform liest Batches mit `Next` und schreibt Records mit `Emit`; das SDK hält die Kredite in beide Richtungen
+ein. Derselbe Typname darf zugleich Action sein.
+
+```go
+runnel.AddTransform(p, runnel.Transform[greetConfig]{
+	Type: "hello.greet", Label: "Greet", Description: "Adds a greeting to every record",
+	RecordErrors: true, // darf einen Fehler-Link haben
+	Parallel:     true, // erlaubt copies
+	Run: func(ctx context.Context, s *runnel.Stream, c greetConfig) error {
+		for {
+			b, ok, err := s.Next(ctx) // ok == false: keine Batches mehr
+			if err != nil || !ok {
+				return err
+			}
+			at := b.Fields.Index(c.Field)
+			out := append(slices.Clone(b.Fields), runnel.Field{Name: "greeting", Type: runnel.TypeString})
+			var good, bad [][]any
+			for _, row := range b.Rows {
+				if name, _ := row[at].(string); name != "" {
+					good = append(good, append(row, "Hello, "+name))
+				} else {
+					bad = append(bad, runnel.ErrorRow(row, "name is empty", c.Field))
+				}
+			}
+			if err := s.Emit(ctx, runnel.Main, out, good); err != nil {
+				return err
+			}
+			if err := s.Emit(ctx, runnel.Error, runnel.ErrorFields(b.Fields), bad); err != nil {
+				return err
+			}
+		}
+	},
+})
+```
+
+- **Ziele von `Emit`:** `runnel.Main` (alle Daten-Links ohne eigenes Ziel), `runnel.Error` (Fehler-Link; Records mit
+  `ErrorFields`/`ErrorRow`, also `_error` und `_errorField`) oder die ID eines Transforms aus einem Feld mit
+  `format=runnel-target`.
+- **Eingaben** (`Category: runnel.CategoryInput`) rufen `Next` nicht auf und schreiben nur mit `Emit`.
+- **Kredite:** Das SDK nimmt höchstens `StreamWindow` (4) Batches an, die `Next` noch nicht geliefert hat; `Emit`
+  wartet, bis Runnel frühere Records weitergegeben hat. Eingehende Nachrichten liest das SDK in einer eigenen
+  Goroutine, deshalb hängt ein wartendes `Emit` nie an einem nicht gelesenen `$/ack`.
+- **Werte** in `Rows`: `int` als `int64`, `float` als `float64`, `decimal` als Text (`"12.50"`), `date` als
+  `"2026-11-24"`, `datetime` als RFC-3339-Text (beim Schreiben auch `time.Time`), `binary` als Base64 (beim Schreiben
+  `[]byte`), `json` als JSON-Wert.
+- **Ein Fehler** aus `Run` (oder ein `panic`) beendet den Strom mit `transform.closed` und Meldung; die Pipeline
+  scheitert. Mehrere Ströme (auch `copies`) laufen in einem Prozess nebeneinander.
+- **`Init`** (optional) prüft die Konfiguration und nennt die Felder des Ausgangs (`InitResult` mit `Output` und
+  `Problems` am Pfad in `with`). Runnel ruft es beim Prüfen ohne Secrets und mit Connections nur als Name auf; Werte,
+  die noch `${…}` sind und nicht passen, bleiben leer.
+- **`DetectFields`** (optional) liest für „Detect fields“ im Editor die ersten Records einer Eingabe und schlägt Felder
+  mit Typ und Beispielwerten vor; Connections kommen dabei aufgelöst.
+- **Feldkopf:** Das SDK schickt `fields` mit jedem `emit`. Das Protokoll erlaubt, ihn bei gleichen Feldern
+  wegzulassen; Runnel bis S50b liest ein solches `emit` aber als eines ohne Felder.
+
+Im Test: `c.RunTransform(typ, config, batches...)` (Kredite wie bei Runnel, Ergebnis mit `Records(runnel.Main)`),
+`c.Init(…)`, `c.DetectFields(…)`. Durchsatz mit Runnel (Beispiel-Plugin, 500.000 Records mit 5 Feldern, 4 Kerne):
+etwa 360.000 Records/s; `make bench` misst den Strom ohne Runnel.
+
 ## Was das SDK übernimmt
 
 - **Start:** Ohne `RUNNEL_PLUGIN=1` gibt `Main` einen Hinweis aus und endet mit Exit-Code 2.
@@ -150,6 +210,7 @@ make runnel-test RUNNEL_BIN=../runnel/bin/runnel
 | Tests (mit Race-Detector) | `make test` |
 | Lint (golangci-lint v2.15.0, Linux- und Windows-Code) | `make lint` (ohne passendes golangci-lint: `make bin/tools/golangci-lint lint GOLANGCI_LINT=bin/tools/golangci-lint`) |
 | Fuzzing der Protokoll-Schleife | `make fuzz FUZZTIME=1m` |
+| Benchmark (Strom eines Transforms) | `make bench` |
 | Tests gegen Runnel | `make runnel-test RUNNEL_BIN=…` |
 
 Versionen nach SemVer mit Tags (`v0.1.0`); bis `v1.0.0` kann sich die Go-API noch ändern, das Protokoll nicht.
@@ -157,5 +218,5 @@ Versionen nach SemVer mit Tags (`v0.1.0`); bis `v1.0.0` kann sich die Go-API noc
 
 ## Plugins mit diesem SDK
 
-- [`runnelhq/plugin-iban`](https://github.com/runnelhq/plugin-iban) – IBAN und BIC prüfen, IBAN bilden
-- [`runnelhq/plugin-ldap`](https://github.com/runnelhq/plugin-ldap) – LDAP und Active Directory: suchen, anmelden, ändern
+- [`runnelhq/plugin-iban`](https://github.com/runnelhq/plugin-iban) – IBAN und BIC prüfen, IBAN bilden; Transform mit Fehler-Link
+- [`runnelhq/plugin-ldap`](https://github.com/runnelhq/plugin-ldap) – LDAP und Active Directory: suchen, anmelden, ändern; Eingabe mit „Detect fields“

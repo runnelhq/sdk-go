@@ -47,6 +47,7 @@ type Plugin struct {
 	Concurrency int
 
 	actions     []*actionEntry
+	transforms  []*transformEntry
 	connections []*connectionEntry
 }
 

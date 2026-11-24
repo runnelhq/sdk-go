@@ -37,6 +37,10 @@ func coerce(s *Schema, v any) any {
 	}
 	switch val := v.(type) {
 	case string:
+		if s.Format == FormatConnection {
+			// transform.init sends connections by name only.
+			return map[string]any{"name": val}
+		}
 		text := strings.TrimSpace(val)
 		switch s.Type {
 		case "integer":
@@ -69,6 +73,33 @@ func coerce(s *Schema, v any) any {
 		}
 	}
 	return v
+}
+
+// decodeLenient is decode for transform.init, where values may still be ${…}: a field
+// whose value does not fit is left at its zero value.
+func decodeLenient(data json.RawMessage, s *Schema, target any) {
+	var raw map[string]any
+	if json.Unmarshal(data, &raw) != nil || raw == nil {
+		return
+	}
+	coerce(s, raw)
+	for range len(raw) + 1 {
+		norm, err := json.Marshal(raw)
+		if err != nil {
+			return
+		}
+		err = json.Unmarshal(norm, target)
+		te, ok := errors.AsType[*json.UnmarshalTypeError](err)
+		if err == nil || !ok || te.Field == "" {
+			return
+		}
+		field, _, _ := strings.Cut(te.Field, ".")
+		if _, found := raw[field]; !found {
+			return
+		}
+		delete(raw, field)
+		reflect.ValueOf(target).Elem().SetZero()
+	}
 }
 
 // explain turns errors of encoding/json into messages without Go type names.

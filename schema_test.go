@@ -65,7 +65,8 @@ func TestSchemaForErrors(t *testing.T) {
 			X string `json:"x" schema:"only=y:a"`
 		}{},
 		"twice": struct {
-			A, B string `json:"a"` //nolint:govet // the mistake under test
+			Embedded
+			B string `json:"base"`
 		}{},
 		"map key": struct {
 			X map[int]string `json:"x"`

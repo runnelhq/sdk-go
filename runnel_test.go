@@ -227,7 +227,7 @@ func TestProtocolRules(t *testing.T) {
 		`not json`,
 		`{"jsonrpc":"2.0","method":"$/unknown","params":{}}`,
 		``,
-		`{"jsonrpc":"2.0","id":3,"method":"transform.open","params":{}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"transform.unknown","params":{}}`,
 		`{"jsonrpc":"2.0","id":4,"method":"shutdown","params":{}}`,
 	)
 	if err != nil {

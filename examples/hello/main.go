@@ -1,10 +1,11 @@
 // Command hello is the example plugin of the Go SDK: the action hello.greet returns a
-// greeting. Build it into plugins/hello/bin/ of a project (see README.md of the SDK).
+// greeting, the transform hello.greet adds one to every record. Build it into plugins/hello/bin/ of a project (see README.md of the SDK).
 package main
 
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	runnel "github.com/runnelhq/sdk-go"
@@ -47,7 +48,78 @@ func newPlugin() *runnel.Plugin {
 			return greetOutput{Message: msg, Length: len(msg)}, nil
 		},
 	})
+	runnel.AddTransform(p, runnel.Transform[greetFieldConfig]{
+		Type:         "hello.greet",
+		Label:        "Greet",
+		Description:  "Adds a greeting for the name in a field of every record",
+		Example:      "type: hello.greet\nwith:\n  field: name\n  target: greeting\n",
+		RecordErrors: true,
+		Parallel:     true,
+		Run:          greetRecords,
+		Init:         initGreet,
+	})
 	return p
+}
+
+type greetFieldConfig struct {
+	Field    string `json:"field" doc:"Field with the name, e.g. name" schema:"required,format=runnel-field,example=name"`
+	Target   string `json:"target" doc:"New field for the greeting" schema:"default=greeting"`
+	Greeting string `json:"greeting" doc:"Word to greet with" schema:"enum=Hello|Hi|Moin,default=Hello"`
+}
+
+func (c *greetFieldConfig) defaults() {
+	if c.Target == "" {
+		c.Target = "greeting"
+	}
+	if c.Greeting == "" {
+		c.Greeting = "Hello"
+	}
+}
+
+// greetRecords adds the greeting to every record; records without a name go to the error
+// link with _error and _errorField.
+func greetRecords(ctx context.Context, s *runnel.Stream, c greetFieldConfig) error {
+	c.defaults()
+	for {
+		b, ok, err := s.Next(ctx)
+		if err != nil || !ok {
+			return err
+		}
+		at := b.Fields.Index(c.Field)
+		if at < 0 {
+			return fmt.Errorf("field %q is not in the records", c.Field)
+		}
+		out := append(slices.Clone(b.Fields), runnel.Field{Name: c.Target, Type: runnel.TypeString})
+		var good, bad [][]any
+		for _, row := range b.Rows {
+			name, _ := row[at].(string)
+			if strings.TrimSpace(name) == "" {
+				bad = append(bad, runnel.ErrorRow(row, "name is empty", c.Field))
+				continue
+			}
+			good = append(good, append(row, fmt.Sprintf("%s, %s!", c.Greeting, name)))
+		}
+		if err := s.Emit(ctx, runnel.Main, out, good); err != nil {
+			return err
+		}
+		if err := s.Emit(ctx, runnel.Error, runnel.ErrorFields(b.Fields), bad); err != nil {
+			return err
+		}
+	}
+}
+
+// initGreet tells Runnel the fields of the output: the input and the greeting.
+func initGreet(_ context.Context, in runnel.InitInput, c greetFieldConfig) runnel.InitResult {
+	c.defaults()
+	res := runnel.InitResult{}
+	if !in.Input.Open && in.Input.Fields.Index(c.Field) < 0 {
+		res.Problems = append(res.Problems, runnel.Problem{Path: "field", Message: fmt.Sprintf("field %q is not in the input", c.Field)})
+	}
+	if in.Input.Fields.Index(c.Target) >= 0 {
+		res.Problems = append(res.Problems, runnel.Problem{Path: "target", Message: fmt.Sprintf("field %q exists already", c.Target)})
+	}
+	res.Output = &runnel.RecordSchema{Fields: append(slices.Clone(in.Input.Fields), runnel.Field{Name: c.Target, Type: runnel.TypeString}), Open: in.Input.Open}
+	return res
 }
 
 func main() { newPlugin().Main() }
