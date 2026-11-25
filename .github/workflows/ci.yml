@@ -33,6 +33,8 @@ jobs:
           GOOS: windows
         with:
           version: v2.15.0
+      - name: No dependencies (plugins would inherit them and their licenses)
+        run: make deps
 
   test:
     name: Test (${{ matrix.os }})
