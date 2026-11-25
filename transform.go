@@ -3,11 +3,13 @@ package runnel
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Categories of transforms in the palette of the editor.
@@ -23,14 +25,15 @@ var transformCategories = []string{CategoryInput, CategoryTransform, CategoryFlo
 
 // Targets of Emit besides the ids of transforms named in fields with format runnel-target.
 const (
-	Main  = "main"  // all data links that do not lead to a target of the configuration
-	Error = "error" // the error link: records with _error and _errorField (see ErrorFields)
+	ToMain  = "main"  // all data links that do not lead to a target of the configuration
+	ToError = "error" // the error link: records with _error and _errorField (see ErrorFields)
 )
 
-// Field types of records (ADR 0007 of Runnel). Values in rows: string; int as int64 (or
-// another integer); float as float64; decimal as text ("1234.56"); bool; date as
-// "2026-11-24"; datetime as time.Time or RFC 3339 text; binary as []byte (or Base64
-// text); json as any JSON value. An empty type means any JSON value.
+// Field types of records (ADR 0007 of Runnel). Values in rows, as Next returns them and
+// as Emit takes them: string; int as int64 (Emit: any integer); float as float64; decimal
+// as text ("1234.56", exact); bool; date as text ("2026-11-24"); datetime as time.Time
+// (Emit also takes RFC 3339 text); binary as []byte; json as any JSON value. An empty
+// type means any JSON value. nil is null in every type.
 const (
 	TypeString   = "string"
 	TypeInt      = "int"
@@ -76,7 +79,7 @@ type Batch struct {
 }
 
 // Transform describes a transform of the plugin with its configuration type C (see
-// SchemaFor). The same type name may also be an action.
+// ConfigSchemaFor). The same type name may also be an action.
 type Transform[C any] struct {
 	// Type is "<namespace>.<name>", e.g. "iban.validate".
 	Type string
@@ -86,7 +89,7 @@ type Transform[C any] struct {
 	Label       string
 	Description string
 	Example     string
-	// RecordErrors: the transform may have an error link (Emit to Error).
+	// RecordErrors: the transform may have an error link (Emit to ToError).
 	RecordErrors bool
 	// Parallel: the transform may run in several copies (copies: in the pipeline).
 	Parallel bool
@@ -170,17 +173,17 @@ type transformEntry struct {
 }
 
 type transformDescriptor struct {
-	Type         string  `json:"type"`
-	Kind         string  `json:"kind"`
-	Category     string  `json:"category"`
-	Label        string  `json:"label"`
-	Description  string  `json:"description"`
-	Schema       *Schema `json:"schema"`
-	Example      string  `json:"example,omitempty"`
-	RecordErrors bool    `json:"recordErrors,omitempty"`
-	Parallel     bool    `json:"parallel,omitempty"`
-	Init         bool    `json:"init,omitempty"`
-	DetectFields bool    `json:"detectFields,omitempty"`
+	Type         string        `json:"type"`
+	Kind         string        `json:"kind"`
+	Category     string        `json:"category"`
+	Label        string        `json:"label"`
+	Description  string        `json:"description"`
+	Schema       *ConfigSchema `json:"schema"`
+	Example      string        `json:"example,omitempty"`
+	RecordErrors bool          `json:"recordErrors,omitempty"`
+	Parallel     bool          `json:"parallel,omitempty"`
+	Init         bool          `json:"init,omitempty"`
+	DetectFields bool          `json:"detectFields,omitempty"`
 }
 
 // AddTransform adds a transform to the plugin. Like AddAction, it panics on mistakes in
@@ -205,7 +208,7 @@ func AddTransform[C any](p *Plugin, t Transform[C]) {
 		panic(fmt.Sprintf("runnel: transform %q needs a label, a description and Run", t.Type))
 	}
 	var zero C
-	s, err := SchemaFor(zero)
+	s, err := ConfigSchemaFor(zero)
 	if err != nil {
 		panic(fmt.Sprintf("runnel: transform %q: %v", t.Type, err))
 	}
@@ -322,8 +325,11 @@ func (s *Stream) Next(ctx context.Context) (Batch, bool, error) {
 	return Batch{Fields: s.inFields, Rows: rows}, true, nil
 }
 
-// decodeRow decodes the values of a row: int as int64, float as float64, untyped numbers
-// as int64 if they are whole, else float64.
+// decodeRow decodes the values of a row by the types of the fields: int as int64, float
+// as float64, datetime as time.Time, binary as []byte; untyped numbers as int64 if they
+// are whole, else float64. Other values stay as JSON gives them (decimal and date as
+// text). A datetime or binary value that Runnel did not encode as the protocol says is an
+// error.
 func decodeRow(raw json.RawMessage, fields Fields) ([]any, error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
@@ -332,28 +338,40 @@ func decodeRow(raw json.RawMessage, fields Fields) ([]any, error) {
 		return nil, err
 	}
 	for i, v := range row {
-		n, ok := v.(json.Number)
-		if !ok {
-			continue
-		}
 		typ := ""
 		if i < len(fields) {
 			typ = fields[i].Type
 		}
-		if typ == TypeFloat {
-			row[i], _ = n.Float64()
-			continue
-		}
-		if x, err := n.Int64(); err == nil {
-			row[i] = x
-		} else {
-			row[i], _ = n.Float64()
+		switch x := v.(type) {
+		case json.Number:
+			if typ == TypeFloat {
+				row[i], _ = x.Float64()
+			} else if n, err := x.Int64(); err == nil {
+				row[i] = n
+			} else {
+				row[i], _ = x.Float64()
+			}
+		case string:
+			switch typ {
+			case TypeDatetime:
+				t, err := time.Parse(time.RFC3339Nano, x)
+				if err != nil {
+					return nil, fmt.Errorf("field %q: %q is not a date and time (RFC 3339)", fields[i].Name, x)
+				}
+				row[i] = t
+			case TypeBinary:
+				b, err := base64.StdEncoding.DecodeString(x)
+				if err != nil {
+					return nil, fmt.Errorf("field %q: the value is not Base64", fields[i].Name)
+				}
+				row[i] = b
+			}
 		}
 	}
 	return row, nil
 }
 
-// Emit writes rows with the given fields to a target: Main, Error or the id of a transform
+// Emit writes rows with the given fields to a target: ToMain, ToError or the id of a transform
 // from a field with format runnel-target. It waits until Runnel takes more records. Rows
 // that do not fit into one message (16 MiB) are sent in several; a single record larger
 // than that is an error. Rows must not be changed after Emit.

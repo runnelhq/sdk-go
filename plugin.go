@@ -74,7 +74,7 @@ type Call struct {
 }
 
 // Action describes an action of the plugin with its configuration type C, a struct whose
-// tags describe the fields (see SchemaFor).
+// tags describe the fields (see ConfigSchemaFor).
 type Action[C any] struct {
 	// Type is "<namespace>.<name>", e.g. "iban.check".
 	Type string
@@ -133,21 +133,21 @@ type connectionEntry struct {
 }
 
 type actionDescriptor struct {
-	Type        string  `json:"type"`
-	Kind        string  `json:"kind"`
-	Category    string  `json:"category"`
-	Label       string  `json:"label"`
-	Description string  `json:"description"`
-	Schema      *Schema `json:"schema"`
-	Example     string  `json:"example,omitempty"`
+	Type        string        `json:"type"`
+	Kind        string        `json:"kind"`
+	Category    string        `json:"category"`
+	Label       string        `json:"label"`
+	Description string        `json:"description"`
+	Schema      *ConfigSchema `json:"schema"`
+	Example     string        `json:"example,omitempty"`
 }
 
 type connectionDescriptor struct {
-	Type        string  `json:"type"`
-	Label       string  `json:"label"`
-	Description string  `json:"description"`
-	Schema      *Schema `json:"schema"`
-	Test        bool    `json:"test,omitempty"`
+	Type        string        `json:"type"`
+	Label       string        `json:"label"`
+	Description string        `json:"description"`
+	Schema      *ConfigSchema `json:"schema"`
+	Test        bool          `json:"test,omitempty"`
 }
 
 // AddAction adds an action to the plugin. It panics on mistakes in the definition (type
@@ -176,7 +176,7 @@ func AddAction[C any](p *Plugin, a Action[C]) {
 		panic(fmt.Sprintf("runnel: action %q has no Run", a.Type))
 	}
 	var zero C
-	s, err := SchemaFor(zero)
+	s, err := ConfigSchemaFor(zero)
 	if err != nil {
 		panic(fmt.Sprintf("runnel: action %q: %v", a.Type, err))
 	}
@@ -205,7 +205,7 @@ func AddConnectionType[C any](p *Plugin, c ConnectionType[C]) {
 		panic(fmt.Sprintf("runnel: connection type %q needs a label and a description", c.Type))
 	}
 	var zero C
-	s, err := SchemaFor(zero)
+	s, err := ConfigSchemaFor(zero)
 	if err != nil {
 		panic(fmt.Sprintf("runnel: connection type %q: %v", c.Type, err))
 	}

@@ -70,7 +70,7 @@ func newBig() *runnel.Plugin {
 			for i := range rows {
 				rows[i] = []any{i, strings.Repeat("x", c.Size)}
 			}
-			return s.Emit(ctx, runnel.Main, fields, rows)
+			return s.Emit(ctx, runnel.ToMain, fields, rows)
 		},
 	})
 	runnel.AddAction(p, runnel.Action[bigConfig]{
@@ -91,7 +91,7 @@ func TestMessageLimit(t *testing.T) {
 	if err != nil || res.Error != "" {
 		t.Fatal(err, res.Error)
 	}
-	if recs := res.Records(runnel.Main); len(recs) != 100 || recs[99]["n"] != 99.0 || len(res.Emits) < 3 {
+	if recs := res.Records(runnel.ToMain); len(recs) != 100 || recs[99]["n"] != 99.0 || len(res.Emits) < 3 {
 		t.Errorf("%d records in %d emits", len(recs), len(res.Emits))
 	}
 	res, err = c.RunTransform("demo.big", map[string]any{"rows": 1, "size": 5000})

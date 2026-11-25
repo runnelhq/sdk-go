@@ -22,21 +22,21 @@ const (
 	FormatConnection = "runnel-connection" // the name of a connection; see the option connection=
 )
 
-// Schema is a JSON Schema, limited to what configurations of actions and connection types
+// ConfigSchema is a JSON ConfigSchema, limited to what configurations of actions and connection types
 // need. Properties keep the order of the struct fields, which is the order the editor
 // shows them in.
-type Schema struct {
-	Schema      string     `json:"$schema,omitempty"`
-	Type        string     `json:"type,omitempty"`
-	Description string     `json:"description,omitempty"`
-	Format      string     `json:"format,omitempty"`
-	Enum        []any      `json:"enum,omitempty"`
-	Default     any        `json:"default,omitempty"`
-	Examples    []any      `json:"examples,omitempty"`
-	Minimum     *int       `json:"minimum,omitempty"`
-	Items       *Schema    `json:"items,omitempty"`
-	Properties  Properties `json:"properties,omitempty"`
-	Required    []string   `json:"required,omitempty"`
+type ConfigSchema struct {
+	Schema      string        `json:"$schema,omitempty"`
+	Type        string        `json:"type,omitempty"`
+	Description string        `json:"description,omitempty"`
+	Format      string        `json:"format,omitempty"`
+	Enum        []any         `json:"enum,omitempty"`
+	Default     any           `json:"default,omitempty"`
+	Examples    []any         `json:"examples,omitempty"`
+	Minimum     *int          `json:"minimum,omitempty"`
+	Items       *ConfigSchema `json:"items,omitempty"`
+	Properties  Properties    `json:"properties,omitempty"`
+	Required    []string      `json:"required,omitempty"`
 	// Only: the field applies only when the sibling field has one of the values.
 	Only map[string][]any `json:"x-runnel-only,omitempty"`
 	// Connection: the connection types a field of format runnel-connection accepts.
@@ -51,7 +51,7 @@ type Schema struct {
 // Property is a named field of an object schema.
 type Property struct {
 	Name   string
-	Schema *Schema
+	Schema *ConfigSchema
 }
 
 // Properties are the fields of an object schema in the order of the struct.
@@ -82,7 +82,7 @@ func (ps Properties) MarshalJSON() ([]byte, error) {
 }
 
 // Lookup returns the schema of a property.
-func (ps Properties) Lookup(name string) (*Schema, bool) {
+func (ps Properties) Lookup(name string) (*ConfigSchema, bool) {
 	for _, p := range ps {
 		if p.Name == name {
 			return p.Schema, true
@@ -91,7 +91,7 @@ func (ps Properties) Lookup(name string) (*Schema, bool) {
 	return nil, false
 }
 
-// SchemaFor returns the JSON Schema of a configuration struct, the same way Runnel derives
+// ConfigSchemaFor returns the JSON Schema of a configuration struct, the same way Runnel derives
 // the schemas of its built-in actions (ADR 0014). config is a struct value or a pointer to
 // one; nil yields an object without properties.
 //
@@ -109,8 +109,8 @@ func (ps Properties) Lookup(name string) (*Schema, bool) {
 //	    connection=<type>|<type>|… (the name of a connection of these types; the field may be
 //	    a struct, which receives the resolved connection). schema:"-" decodes the field but
 //	    leaves it out of the schema (as in ConnectionInfo). Values must not contain commas.
-func SchemaFor(config any) (*Schema, error) {
-	s := &Schema{Type: "object", AdditionalProperties: false}
+func ConfigSchemaFor(config any) (*ConfigSchema, error) {
+	s := &ConfigSchema{Type: "object", AdditionalProperties: false}
 	if config != nil {
 		t := reflect.TypeOf(config)
 		for t.Kind() == reflect.Pointer {
@@ -128,30 +128,30 @@ func SchemaFor(config any) (*Schema, error) {
 	return s, nil
 }
 
-func schemaOf(t reflect.Type, path string, seen []reflect.Type) (*Schema, error) {
+func schemaOf(t reflect.Type, path string, seen []reflect.Type) (*ConfigSchema, error) {
 	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 	switch t.Kind() {
 	case reflect.String:
-		return &Schema{Type: "string"}, nil
+		return &ConfigSchema{Type: "string"}, nil
 	case reflect.Bool:
-		return &Schema{Type: "boolean"}, nil
+		return &ConfigSchema{Type: "boolean"}, nil
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		return &Schema{Type: "integer"}, nil
+		return &ConfigSchema{Type: "integer"}, nil
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 		zero := 0
-		return &Schema{Type: "integer", Minimum: &zero}, nil
+		return &ConfigSchema{Type: "integer", Minimum: &zero}, nil
 	case reflect.Float32, reflect.Float64:
-		return &Schema{Type: "number"}, nil
+		return &ConfigSchema{Type: "number"}, nil
 	case reflect.Interface:
-		return &Schema{}, nil // any value
+		return &ConfigSchema{}, nil // any value
 	case reflect.Slice, reflect.Array:
 		items, err := schemaOf(t.Elem(), path+"[]", seen)
 		if err != nil {
 			return nil, err
 		}
-		return &Schema{Type: "array", Items: items}, nil
+		return &ConfigSchema{Type: "array", Items: items}, nil
 	case reflect.Map:
 		if t.Key().Kind() != reflect.String {
 			return nil, fmt.Errorf("%s: map keys must be strings", describePath(path))
@@ -160,7 +160,7 @@ func schemaOf(t reflect.Type, path string, seen []reflect.Type) (*Schema, error)
 		if err != nil {
 			return nil, err
 		}
-		return &Schema{Type: "object", AdditionalProperties: values}, nil
+		return &ConfigSchema{Type: "object", AdditionalProperties: values}, nil
 	case reflect.Struct:
 		if slices.Contains(seen, t) {
 			return nil, fmt.Errorf("%s: recursive type %s", describePath(path), t)
@@ -171,17 +171,17 @@ func schemaOf(t reflect.Type, path string, seen []reflect.Type) (*Schema, error)
 	}
 }
 
-func schemaOfStruct(t reflect.Type, path string, seen []reflect.Type) (*Schema, error) {
-	s := &Schema{Type: "object", AdditionalProperties: false}
+func schemaOfStruct(t reflect.Type, path string, seen []reflect.Type) (*ConfigSchema, error) {
+	s := &ConfigSchema{Type: "object", AdditionalProperties: false}
 	for _, f := range fieldsOf(t) {
 		fieldPath := joinPath(path, f.name)
 		if f.options.err != nil {
 			return nil, fmt.Errorf("%s: %w", describePath(fieldPath), f.options.err)
 		}
-		var fs *Schema
+		var fs *ConfigSchema
 		if len(f.options.connection) > 0 {
 			// The file names the connection; the plugin receives it resolved.
-			fs = &Schema{Type: "string"}
+			fs = &ConfigSchema{Type: "string"}
 		} else {
 			var err error
 			if fs, err = schemaOf(f.typ, fieldPath, seen); err != nil {
@@ -210,7 +210,7 @@ func schemaOfStruct(t reflect.Type, path string, seen []reflect.Type) (*Schema, 
 	return s, nil
 }
 
-func applyOptions(s *Schema, o fieldOptions, path string) error {
+func applyOptions(s *ConfigSchema, o fieldOptions, path string) error {
 	s.Group = o.group
 	if o.only != "" {
 		field, values, ok := strings.Cut(o.only, ":")
@@ -236,7 +236,7 @@ func applyOptions(s *Schema, o fieldOptions, path string) error {
 			s.Items.Format = o.format
 		case s.Type == "object" && isTextMap(s.AdditionalProperties):
 			s.Format = o.format
-			s.AdditionalProperties.(*Schema).Format = o.format
+			s.AdditionalProperties.(*ConfigSchema).Format = o.format
 		default:
 			return fmt.Errorf("%s: format is only allowed for strings, lists of strings and mappings of strings", describePath(path))
 		}
@@ -266,7 +266,7 @@ func applyOptions(s *Schema, o fieldOptions, path string) error {
 }
 
 func isTextMap(additional any) bool {
-	s, ok := additional.(*Schema)
+	s, ok := additional.(*ConfigSchema)
 	return ok && s.Type == "string"
 }
 

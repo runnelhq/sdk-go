@@ -67,7 +67,7 @@ actions:
 
 ## Konfiguration als Struct
 
-Das JSON Schema der Konfiguration entsteht aus den Tags – genau wie bei den eingebauten Actions von Runnel (ADR 0014).
+Das JSON Schema der Konfiguration (`ConfigSchema`, `ConfigSchemaFor`) entsteht aus den Tags – genau wie bei den eingebauten Actions von Runnel (ADR 0014).
 Runnel prüft die `with:`-Werte gegen das Schema (Pflichtfelder, unbekannte Felder), löst Variablen, Ausdrücke und
 Connections auf und ruft erst dann das Plugin.
 
@@ -136,10 +136,10 @@ runnel.AddTransform(p, runnel.Transform[greetConfig]{
 					bad = append(bad, runnel.ErrorRow(row, "name is empty", c.Field))
 				}
 			}
-			if err := s.Emit(ctx, runnel.Main, out, good); err != nil {
+			if err := s.Emit(ctx, runnel.ToMain, out, good); err != nil {
 				return err
 			}
-			if err := s.Emit(ctx, runnel.Error, runnel.ErrorFields(b.Fields), bad); err != nil {
+			if err := s.Emit(ctx, runnel.ToError, runnel.ErrorFields(b.Fields), bad); err != nil {
 				return err
 			}
 		}
@@ -147,7 +147,7 @@ runnel.AddTransform(p, runnel.Transform[greetConfig]{
 })
 ```
 
-- **Ziele von `Emit`:** `runnel.Main` (alle Daten-Links ohne eigenes Ziel), `runnel.Error` (Fehler-Link; Records mit
+- **Ziele von `Emit`:** `runnel.ToMain` (alle Daten-Links ohne eigenes Ziel), `runnel.ToError` (Fehler-Link; Records mit
   `ErrorFields`/`ErrorRow`, also `_error` und `_errorField`) oder die ID eines Transforms aus einem Feld mit
   `format=runnel-target`.
 - **Eingaben** (`Category: runnel.CategoryInput`) rufen `Next` nicht auf und schreiben nur mit `Emit`.
@@ -157,9 +157,9 @@ runnel.AddTransform(p, runnel.Transform[greetConfig]{
   vereinbart, endet der Strom mit Fehler, statt Records zu verwerfen.
 - **Größe:** Records, die nicht in eine Nachricht (16 MiB) passen, schickt `Emit` in mehreren `emit`; ein einzelner
   Record über 16 MiB ist ein Fehler des Transforms.
-- **Werte** in `Rows`: `int` als `int64`, `float` als `float64`, `decimal` als Text (`"12.50"`), `date` als
-  `"2026-11-24"`, `datetime` als RFC-3339-Text (beim Schreiben auch `time.Time`), `binary` als Base64 (beim Schreiben
-  `[]byte`), `json` als JSON-Wert.
+- **Werte** in `Rows`, beim Lesen mit `Next` wie beim Schreiben mit `Emit`: `int` als `int64`, `float` als `float64`,
+  `decimal` als Text (`"12.50"`, exakt), `date` als Text (`"2026-11-24"`), `datetime` als `time.Time` (beim Schreiben
+  auch RFC-3339-Text), `binary` als `[]byte`, `json` als JSON-Wert, `null` als `nil`.
 - **Ein Fehler** aus `Run` (oder ein `panic`) beendet den Strom mit `transform.closed` und Meldung; die Pipeline
   scheitert. Mehrere Ströme (auch `copies`) laufen in einem Prozess nebeneinander.
 - **`Init`** (optional) prüft die Konfiguration und nennt die Felder des Ausgangs (`InitResult` mit `Output` und
@@ -170,7 +170,7 @@ runnel.AddTransform(p, runnel.Transform[greetConfig]{
 - **Feldkopf:** Das SDK schickt `fields` mit jedem `emit`. Das Protokoll erlaubt, ihn bei gleichen Feldern
   wegzulassen; Runnel vor dem Fix in runnel#228 liest ein solches `emit` aber als eines ohne Felder.
 
-Im Test: `c.RunTransform(typ, config, batches...)` (Kredite wie bei Runnel, Ergebnis mit `Records(runnel.Main)`),
+Im Test: `c.RunTransform(typ, config, batches...)` (Kredite wie bei Runnel, Ergebnis mit `Records(runnel.ToMain)`),
 `c.Init(…)`, `c.DetectFields(…)`. Durchsatz mit Runnel (Beispiel-Plugin, 500.000 Records mit 5 Feldern, 4 Kerne):
 etwa 360.000 Records/s; `make bench` misst den Strom ohne Runnel.
 

@@ -20,7 +20,7 @@
 //	}
 //
 // The schema of the configuration comes from the struct tags, as for the built-in actions
-// of Runnel (see SchemaFor). Runnel checks the configuration against it and resolves
+// of Runnel (see ConfigSchemaFor). Runnel checks the configuration against it and resolves
 // variables, expressions and connections before it calls the plugin.
 //
 // Transforms in pipelines (AddTransform) read batches with Stream.Next and write records

@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestSchemaFor(t *testing.T) {
+func TestConfigSchemaFor(t *testing.T) {
 	type inner struct {
 		Port uint `json:"port" schema:"default=389"`
 	}
@@ -24,7 +24,7 @@ func TestSchemaFor(t *testing.T) {
 		Hidden  string            `json:"-"`
 		private string
 	}
-	s, err := SchemaFor(config{})
+	s, err := ConfigSchemaFor(config{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestSchemaForErrors(t *testing.T) {
 		}{},
 	}
 	for name, config := range tests {
-		if _, err := SchemaFor(config); err == nil {
+		if _, err := ConfigSchemaFor(config); err == nil {
 			t.Errorf("%s: no error", name)
 		} else if strings.Contains(err.Error(), "reflect") {
 			t.Errorf("%s: %v", name, err)
