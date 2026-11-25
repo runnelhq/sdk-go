@@ -210,10 +210,11 @@ make runnel-test RUNNEL_BIN=../runnel/bin/runnel
 | Tests (mit Race-Detector) | `make test` |
 | Lint (golangci-lint v2.15.0, Linux- und Windows-Code) | `make lint` (ohne passendes golangci-lint: `make bin/tools/golangci-lint lint GOLANGCI_LINT=bin/tools/golangci-lint`) |
 | Fuzzing der Protokoll-Schleife | `make fuzz FUZZTIME=1m` |
+| Schwachstellen (auch wöchentlich in der CI) | `go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...` |
 | Benchmark (Strom eines Transforms) | `make bench` |
 | Tests gegen Runnel | `make runnel-test RUNNEL_BIN=…` |
 
-Versionen nach SemVer mit Tags (`v0.1.0`); bis `v1.0.0` kann sich die Go-API noch ändern, das Protokoll nicht.
+Versionen nach SemVer mit Tags (`v0.1.0`, Go-Module kommen direkt aus dem Tag, ein Release-Workflow ist nicht nötig); bis `v1.0.0` kann sich die Go-API noch ändern, das Protokoll nicht.
 Änderungen stehen in [CHANGELOG.md](CHANGELOG.md).
 
 ## Plugins mit diesem SDK
