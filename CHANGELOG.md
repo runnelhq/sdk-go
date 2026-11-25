@@ -14,3 +14,6 @@
   - `Main` leitet `os.Stdout` auf stderr um; Ausgaben mit `fmt.Println` zerstören das Protokoll nicht mehr.
   - `Emit` teilt Records, die nicht in eine Nachricht passen (16 MiB); ein zu großer Record und eine zu große Antwort
     einer Action sind Fehlermeldungen, statt dass Runnel das Plugin beendet.
+- Namen vor dem ersten Release festgelegt: `ConfigSchema` und `ConfigSchemaFor` (JSON Schema der Konfiguration, vorher
+  `Schema` und `SchemaFor`), `RecordSchema` (Felder der Datensätze), Ziele `ToMain` und `ToError` (vorher `Main` und
+  `Error`). `Next` liefert `datetime` als `time.Time` und `binary` als `[]byte`, wie `Emit` sie nimmt.

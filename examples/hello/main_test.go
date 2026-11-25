@@ -33,7 +33,7 @@ func TestGreetRecords(t *testing.T) {
 	if err != nil || res.Error != "" {
 		t.Fatal(err, res.Error)
 	}
-	main, errs := res.Records(runnel.Main), res.Records(runnel.Error)
+	main, errs := res.Records(runnel.ToMain), res.Records(runnel.ToError)
 	if len(main) != 2 || main[1]["greeting"] != "Moin, Ben!" || len(errs) != 1 || errs[0]["_errorField"] != "name" {
 		t.Errorf("main %v, errors %v", main, errs)
 	}
