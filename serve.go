@@ -36,7 +36,12 @@ func (p *Plugin) Main() {
 		fmt.Fprintf(os.Stderr, "%s %s is a Runnel plugin: put its folder into plugins/ of a project and run \"runnel plugins trust\".\n", p.Name, p.Version)
 		os.Exit(2)
 	}
-	if err := p.Serve(context.Background(), os.Stdin, os.Stdout, os.Stderr); err != nil {
+	// stdout belongs to the protocol alone. Output of the plugin or its libraries that
+	// goes to os.Stdout (fmt.Println, log packages) would break it, so it goes to stderr,
+	// which Runnel shows in the log of the run.
+	protocol := os.Stdout
+	os.Stdout = os.Stderr
+	if err := p.Serve(context.Background(), os.Stdin, protocol, os.Stderr); err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR %v\n", err)
 		os.Exit(1)
 	}
@@ -124,24 +129,52 @@ type rpcError struct {
 	Message string `json:"message"`
 }
 
+// maxMessage is MaxMessageSize; tests make it smaller.
+var maxMessage = MaxMessageSize
+
+// fits reports whether a message (without its newline) is within the limit of Runnel.
+func fits(data []byte) bool { return len(data)+1 <= maxMessage }
+
 func (s *server) send(v any) {
 	data, err := json.Marshal(v)
 	if err != nil {
 		data, _ = json.Marshal(map[string]any{"jsonrpc": "2.0", "id": nil, "error": rpcError{CodeActionFailed, "cannot encode the answer"}})
 	}
+	s.sendRaw(data)
+}
+
+// sendRaw writes an encoded message and its newline.
+func (s *server) sendRaw(data []byte) {
 	s.outMu.Lock()
 	defer s.outMu.Unlock()
-	_, _ = s.out.Write(append(data, '\n'))
+	_, _ = s.out.Write(data)
+	_ = s.out.WriteByte('\n')
 	_ = s.out.Flush()
 }
 
 func (s *server) reply(id json.RawMessage, result any) {
-	data, err := json.Marshal(result)
+	data, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "result": result})
 	if err != nil {
 		s.fail(id, CodeActionFailed, fmt.Sprintf("the plugin cannot encode its result: %v", err))
 		return
 	}
-	s.send(map[string]any{"jsonrpc": "2.0", "id": id, "result": json.RawMessage(data)})
+	if !fits(data) {
+		// Runnel would end the plugin for a longer line; the request fails instead.
+		s.fail(id, CodeActionFailed, fmt.Sprintf("the result has %s, more than the %s a message may have; return less, e.g. fewer entries", byteSize(len(data)), byteSize(maxMessage)))
+		return
+	}
+	s.sendRaw(data)
+}
+
+// byteSize writes a number of bytes for messages, e.g. 16 MiB or 1200 bytes.
+func byteSize(n int) string {
+	if n >= 1<<20 && n%(1<<20) == 0 {
+		return fmt.Sprintf("%d MiB", n>>20)
+	}
+	if n >= 1<<20 {
+		return fmt.Sprintf("%.1f MiB", float64(n)/(1<<20))
+	}
+	return fmt.Sprintf("%d bytes", n)
 }
 
 func (s *server) fail(id json.RawMessage, code int, msg string) {

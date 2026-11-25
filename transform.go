@@ -262,6 +262,25 @@ type Stream struct {
 	credits  int           // emits Runnel still takes
 	more     chan struct{} // signalled when credits grow
 	inFields Fields        // fields of the last batch
+	broken   error         // set when Runnel did not keep to the protocol; ends the stream
+	cancel   context.CancelFunc
+}
+
+// fail ends the stream with an error of the protocol: Run's context is cancelled, and
+// transform.closed reports err instead of what Run returns.
+func (s *Stream) fail(err error) {
+	s.mu.Lock()
+	if s.broken == nil {
+		s.broken = err
+	}
+	s.mu.Unlock()
+	s.cancel()
+}
+
+func (s *Stream) brokenErr() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.broken
 }
 
 // Next returns the next batch, or false after the last one. A batch's Rows belong to the
@@ -271,6 +290,9 @@ func (s *Stream) Next(ctx context.Context) (Batch, bool, error) {
 	select {
 	case raw = <-s.batches:
 	case <-ctx.Done():
+		if err := s.brokenErr(); err != nil {
+			return Batch{}, false, err
+		}
 		return Batch{}, false, ctx.Err()
 	}
 	if raw == nil {
@@ -332,12 +354,52 @@ func decodeRow(raw json.RawMessage, fields Fields) ([]any, error) {
 }
 
 // Emit writes rows with the given fields to a target: Main, Error or the id of a transform
-// from a field with format runnel-target. It waits until Runnel takes more records.
-// Rows must not be changed after Emit.
+// from a field with format runnel-target. It waits until Runnel takes more records. Rows
+// that do not fit into one message (16 MiB) are sent in several; a single record larger
+// than that is an error. Rows must not be changed after Emit.
 func (s *Stream) Emit(ctx context.Context, to string, fields Fields, rows [][]any) error {
 	if len(rows) == 0 {
 		return nil
 	}
+	// fields go with every emit: the protocol allows leaving them out when they did not
+	// change, but Runnel before the fix of runnel#228 reads such an emit as one without
+	// fields.
+	data, err := json.Marshal(emitMessage{JSONRPC: "2.0", Method: "transform.emit", Params: emitParams{Stream: s.id, To: to, Fields: fields, Rows: rows}})
+	if err != nil {
+		return fmt.Errorf("cannot encode the records for %q: %w", to, err)
+	}
+	if !fits(data) {
+		if len(rows) == 1 {
+			return fmt.Errorf("a record for %q has %s, more than the %s a message may have", to, byteSize(len(data)), byteSize(maxMessage))
+		}
+		half := len(rows) / 2
+		if err := s.Emit(ctx, to, fields, rows[:half]); err != nil {
+			return err
+		}
+		return s.Emit(ctx, to, fields, rows[half:])
+	}
+	if err := s.credit(ctx); err != nil {
+		return err
+	}
+	s.srv.sendRaw(data)
+	return nil
+}
+
+type emitMessage struct {
+	JSONRPC string     `json:"jsonrpc"`
+	Method  string     `json:"method"`
+	Params  emitParams `json:"params"`
+}
+
+type emitParams struct {
+	Stream int64   `json:"stream"`
+	To     string  `json:"to"`
+	Fields Fields  `json:"fields"`
+	Rows   [][]any `json:"rows"`
+}
+
+// credit waits for a credit of Runnel and takes it.
+func (s *Stream) credit(ctx context.Context) error {
 	s.mu.Lock()
 	for s.credits <= 0 {
 		more := s.more
@@ -345,16 +407,15 @@ func (s *Stream) Emit(ctx context.Context, to string, fields Fields, rows [][]an
 		select {
 		case <-more:
 		case <-ctx.Done():
+			if err := s.brokenErr(); err != nil {
+				return err
+			}
 			return ctx.Err()
 		}
 		s.mu.Lock()
 	}
 	s.credits--
 	s.mu.Unlock()
-	// fields go with every emit: the protocol allows leaving them out when they did not
-	// change, but Runnel up to S50b reads such an emit as one without fields.
-	msg := map[string]any{"stream": s.id, "to": to, "fields": fields, "rows": rows}
-	s.srv.notify("transform.emit", msg)
 	return nil
 }
 
@@ -401,9 +462,12 @@ func (srv *server) openStream(ctx context.Context, m message) {
 		Environment: params.Context.Environment, Log: srv.log,
 		id: params.Stream, srv: srv, batches: make(chan json.RawMessage, StreamWindow+1), credits: credits, more: make(chan struct{}),
 	}
+	sctx, cancel := context.WithCancel(ctx)
+	st.cancel = cancel
 	srv.mu.Lock()
 	if _, dup := srv.streams[st.id]; dup {
 		srv.mu.Unlock()
+		cancel()
 		srv.fail(m.ID, CodeInvalidParams, fmt.Sprintf("stream %d is open already", st.id))
 		return
 	}
@@ -411,13 +475,17 @@ func (srv *server) openStream(ctx context.Context, m message) {
 	srv.mu.Unlock()
 	srv.reply(m.ID, map[string]any{"window": StreamWindow})
 	srv.wg.Go(func() {
+		defer cancel()
 		closed := map[string]any{"stream": st.id}
-		_, err := safely(ctx, srv.log, params.Type, func(ctx context.Context) (any, error) {
+		_, err := safely(sctx, srv.log, params.Type, func(ctx context.Context) (any, error) {
 			return nil, entry.run(ctx, st, params.Config)
 		})
 		srv.mu.Lock()
 		delete(srv.streams, st.id)
 		srv.mu.Unlock()
+		if broken := st.brokenErr(); broken != nil {
+			err = broken // the cause, not the cancellation it led to
+		}
 		if err != nil {
 			closed["error"] = map[string]any{"message": err.Error()}
 		}
@@ -427,7 +495,7 @@ func (srv *server) openStream(ctx context.Context, m message) {
 
 // streamMessage handles transform.batch, transform.end and $/ack of a stream. It never
 // blocks: Runnel sends at most StreamWindow batches ahead, so the buffer has room; more
-// is an error of the host, which ends the stream.
+// is an error of the host, which ends the stream with an error.
 func (srv *server) streamMessage(m message) {
 	var p struct {
 		Stream  int64 `json:"stream"`
@@ -452,10 +520,19 @@ func (srv *server) streamMessage(m message) {
 		if m.Method == "transform.batch" {
 			item = m.Params
 		}
+		if st.brokenErr() != nil {
+			return
+		}
+		if item != nil && len(st.batches) >= StreamWindow {
+			// Dropping the batch would lose records; the stream fails instead.
+			st.fail(fmt.Errorf("more than %d batches arrived from Runnel without waiting for $/ack; the records cannot be processed completely", StreamWindow))
+			return
+		}
 		select {
 		case st.batches <- item:
 		default:
-			srv.log.Error("stream %d: Runnel sent more batches than the window of %d", p.Stream, StreamWindow)
+			// Dropping the batch would lose records; the stream fails instead.
+			st.fail(fmt.Errorf("more than %d batches arrived from Runnel without waiting for $/ack; the records cannot be processed completely", StreamWindow))
 		}
 	}
 }

@@ -153,7 +153,10 @@ runnel.AddTransform(p, runnel.Transform[greetConfig]{
 - **Eingaben** (`Category: runnel.CategoryInput`) rufen `Next` nicht auf und schreiben nur mit `Emit`.
 - **Kredite:** Das SDK nimmt höchstens `StreamWindow` (4) Batches an, die `Next` noch nicht geliefert hat; `Emit`
   wartet, bis Runnel frühere Records weitergegeben hat. Eingehende Nachrichten liest das SDK in einer eigenen
-  Goroutine, deshalb hängt ein wartendes `Emit` nie an einem nicht gelesenen `$/ack`.
+  Goroutine, deshalb hängt ein wartendes `Emit` nie an einem nicht gelesenen `$/ack`. Schickt Runnel mehr Batches als
+  vereinbart, endet der Strom mit Fehler, statt Records zu verwerfen.
+- **Größe:** Records, die nicht in eine Nachricht (16 MiB) passen, schickt `Emit` in mehreren `emit`; ein einzelner
+  Record über 16 MiB ist ein Fehler des Transforms.
 - **Werte** in `Rows`: `int` als `int64`, `float` als `float64`, `decimal` als Text (`"12.50"`), `date` als
   `"2026-11-24"`, `datetime` als RFC-3339-Text (beim Schreiben auch `time.Time`), `binary` als Base64 (beim Schreiben
   `[]byte`), `json` als JSON-Wert.
@@ -165,7 +168,7 @@ runnel.AddTransform(p, runnel.Transform[greetConfig]{
 - **`DetectFields`** (optional) liest für „Detect fields“ im Editor die ersten Records einer Eingabe und schlägt Felder
   mit Typ und Beispielwerten vor; Connections kommen dabei aufgelöst.
 - **Feldkopf:** Das SDK schickt `fields` mit jedem `emit`. Das Protokoll erlaubt, ihn bei gleichen Feldern
-  wegzulassen; Runnel bis S50b liest ein solches `emit` aber als eines ohne Felder.
+  wegzulassen; Runnel vor dem Fix in runnel#228 liest ein solches `emit` aber als eines ohne Felder.
 
 Im Test: `c.RunTransform(typ, config, batches...)` (Kredite wie bei Runnel, Ergebnis mit `Records(runnel.Main)`),
 `c.Init(…)`, `c.DetectFields(…)`. Durchsatz mit Runnel (Beispiel-Plugin, 500.000 Records mit 5 Feldern, 4 Kerne):
@@ -179,9 +182,12 @@ etwa 360.000 Records/s; `make bench` misst den Strom ohne Runnel.
 - **Parallelität:** höchstens `Concurrency` Anfragen gleichzeitig, jede in einer eigenen Goroutine.
 - **Abbruch:** `$/cancelRequest` beendet den `ctx` der Action; das SDK antwortet mit `-32800`.
 - **Fehler:** Ein `error` aus `Run` wird zur Meldung der Action (`-32000`); ein `panic` ebenso, das Plugin läuft weiter.
-  Unbekannte Methoden: `-32601`; Nachrichten über 16 MiB beenden das Plugin.
+  Unbekannte Methoden: `-32601`. Eine Antwort über 16 MiB (z. B. ein sehr großes `output`) wird zur Fehlermeldung der
+  Action, statt das Plugin zu beenden; eingehende Nachrichten über 16 MiB beenden es.
 - **Log:** `call.Log.Debug/Info/Warn/Error` schreibt Zeilen mit Stufe auf stderr; Runnel zeigt sie im Log des Laufs.
-  stdout gehört allein dem Protokoll – nie `fmt.Println` in einem Plugin.
+- **stdout:** gehört allein dem Protokoll. `Main` leitet `os.Stdout` auf stderr um, sodass `fmt.Println` oder das Log
+  einer Bibliothek nur im Log landen, statt das Protokoll zu zerstören. Code, der direkt auf den Dateideskriptor 1
+  schreibt (z. B. C-Bibliotheken), erfasst das nicht.
 
 ## Testen
 
