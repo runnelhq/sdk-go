@@ -81,7 +81,7 @@ func TestInitializeAndDescribe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(d.Actions) != 1 || d.Actions[0].Type != "demo.echo" || d.Actions[0].Kind != "action" || d.Actions[0].Category != "general" {
+	if len(d.Actions) != 1 || d.Actions[0].Type != "demo.echo" || d.Actions[0].Kind != "action" || d.Actions[0].Category != "" {
 		t.Fatalf("actions = %+v", d.Actions)
 	}
 	wantAction := `{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{` +

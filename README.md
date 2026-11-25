@@ -65,6 +65,19 @@ actions:
       name: ${TARGET}
 ```
 
+## Kategorie und Gruppe in der Palette
+
+`Category` ist optional. Ohne Kategorie zeigt der Editor die Bausteine eines Plugins in einer eigenen Gruppe
+„Plugin: \<name\>“; so sieht man, woher sie kommen. Mit einer Kategorie der eingebauten stehen sie in deren Gruppe:
+
+| | Kategorien |
+|---|---|
+| Actions | `CategoryGeneral`, `CategoryExecution`, `CategoryFiles`, `CategoryNetwork`, `CategoryDatabase` |
+| Transforms | `CategoryInput`, `CategoryTransform`, `CategoryFlow`, `CategoryExecution`, `CategoryCombine`, `CategoryOutput` |
+
+Eine Eingabe (ohne eingehende Links) braucht `CategoryInput`. Runnel vor runnel#236 zeigt Bausteine ohne Kategorie
+unter „General“ bzw. „Transform“.
+
 ## Konfiguration als Struct
 
 Das JSON Schema der Konfiguration (`ConfigSchema`, `ConfigSchemaFor`) entsteht aus den Tags – genau wie bei den eingebauten Actions von Runnel (ADR 0014).
@@ -150,7 +163,8 @@ runnel.AddTransform(p, runnel.Transform[greetConfig]{
 - **Ziele von `Emit`:** `runnel.ToMain` (alle Daten-Links ohne eigenes Ziel), `runnel.ToError` (Fehler-Link; Records mit
   `ErrorFields`/`ErrorRow`, also `_error` und `_errorField`) oder die ID eines Transforms aus einem Feld mit
   `format=runnel-target`.
-- **Eingaben** (`Category: runnel.CategoryInput`) rufen `Next` nicht auf und schreiben nur mit `Emit`.
+- **Eingaben** (`Category: runnel.CategoryInput`) rufen `Next` nicht auf und schreiben nur mit `Emit`. Die Kategorie
+  `input` brauchen sie, damit der Editor keinen Link hinein anbietet.
 - **Kredite:** Das SDK nimmt höchstens `StreamWindow` (4) Batches an, die `Next` noch nicht geliefert hat; `Emit`
   wartet, bis Runnel frühere Records weitergegeben hat. Eingehende Nachrichten liest das SDK in einer eigenen
   Goroutine, deshalb hängt ein wartendes `Emit` nie an einem nicht gelesenen `$/ack`. Schickt Runnel mehr Batches als

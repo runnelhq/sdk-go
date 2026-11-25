@@ -78,7 +78,9 @@ type Call struct {
 type Action[C any] struct {
 	// Type is "<namespace>.<name>", e.g. "iban.check".
 	Type string
-	// Category is one of the Category constants; empty means CategoryGeneral.
+	// Category is optional: one of the Category constants puts the action into that group
+	// of the palette; empty puts it into a group of its own named after the plugin
+	// ("Plugin: <name>", Runnel after runnel#236; older versions show it under general).
 	Category string
 	// Label is the short name in the palette, e.g. "Check IBAN".
 	Label string
@@ -135,7 +137,7 @@ type connectionEntry struct {
 type actionDescriptor struct {
 	Type        string        `json:"type"`
 	Kind        string        `json:"kind"`
-	Category    string        `json:"category"`
+	Category    string        `json:"category,omitempty"`
 	Label       string        `json:"label"`
 	Description string        `json:"description"`
 	Schema      *ConfigSchema `json:"schema"`
@@ -163,10 +165,7 @@ func AddAction[C any](p *Plugin, a Action[C]) {
 	if slices.ContainsFunc(p.actions, func(e *actionEntry) bool { return e.descriptor.Type == a.Type }) {
 		panic(fmt.Sprintf("runnel: action type %q added twice", a.Type))
 	}
-	if a.Category == "" {
-		a.Category = CategoryGeneral
-	}
-	if !slices.Contains(categories, a.Category) {
+	if a.Category != "" && !slices.Contains(categories, a.Category) {
 		panic(fmt.Sprintf("runnel: action %q: unknown category %q", a.Type, a.Category))
 	}
 	if a.Label == "" || a.Description == "" {

@@ -1,6 +1,14 @@
 # Änderungen
 
-## Unveröffentlicht (v0.1.0)
+## Unveröffentlicht
+
+- **Geändert:** Die Kategorie von Actions und Transforms ist optional. Ohne `Category` gibt `describe` keine
+  Kategorie mehr an (bisher `general` bzw. `transform`); Runnel zeigt den Baustein dann in einer eigenen Gruppe
+  „Plugin: \<name\>“ der Palette (ab runnel#236, ältere Versionen wie bisher unter General bzw. Transform). Wer die
+  bisherige Gruppe behalten will, setzt `Category: runnel.CategoryGeneral` bzw. `runnel.CategoryTransform`. Eine
+  Eingabe braucht weiter `runnel.CategoryInput`, damit der Editor keinen Link hinein anbietet.
+
+## v0.1.0 (2026-11-25)
 
 - Erste Version für Runnel ab S49c: Handshake, `describe` mit Schemas aus Struct-Tags, `action.execute`,
   Connection-Typen mit `connection.test`, `concurrency`, `$/cancelRequest`, Log über stderr.

@@ -118,7 +118,7 @@ func TestTransformDescribe(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		`"type":"demo.upper","kind":"transform","category":"transform","label":"Upper"`,
+		`"type":"demo.upper","kind":"transform","label":"Upper"`,
 		`"recordErrors":true,"parallel":true,"init":true}`,
 		`"field":{"type":"string","description":"Field to write in capitals","format":"runnel-field"}`,
 		`"bad":{"type":"string","description":"Target of the value route","format":"runnel-target"}`,
