@@ -83,3 +83,37 @@ func TestSchemaForErrors(t *testing.T) {
 		}
 	}
 }
+
+// Defaults, examples and enums take the type of their field.
+func TestSchemaValueTypes(t *testing.T) {
+	type config struct {
+		On    bool    `json:"on" schema:"default=true"`
+		Ratio float64 `json:"ratio" schema:"default=1.5,enum=1.5|2.5"`
+		Count int     `json:"count" schema:"example=3"`
+	}
+	s, err := ConfigSchemaFor(config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	on, _ := s.Properties.Lookup("on")
+	ratio, _ := s.Properties.Lookup("ratio")
+	count, _ := s.Properties.Lookup("count")
+	if on.Default != true || ratio.Default != 1.5 || ratio.Enum[1] != 2.5 || count.Examples[0] != int64(3) {
+		t.Errorf("on %v, ratio %v %v, count %v", on.Default, ratio.Default, ratio.Enum, count.Examples)
+	}
+	for name, c := range map[string]any{
+		"bool": struct {
+			X bool `json:"x" schema:"default=maybe"`
+		}{},
+		"number": struct {
+			X float64 `json:"x" schema:"enum=a|b"`
+		}{},
+		"list": struct {
+			X []int `json:"x" schema:"default=1"`
+		}{},
+	} {
+		if _, err := ConfigSchemaFor(c); err == nil {
+			t.Errorf("%s: no error", name)
+		}
+	}
+}
