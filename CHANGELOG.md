@@ -17,3 +17,6 @@
 - Namen vor dem ersten Release festgelegt: `ConfigSchema` und `ConfigSchemaFor` (JSON Schema der Konfiguration, vorher
   `Schema` und `SchemaFor`), `RecordSchema` (Felder der Datensätze), Ziele `ToMain` und `ToError` (vorher `Main` und
   `Error`). `Next` liefert `datetime` als `time.Time` und `binary` als `[]byte`, wie `Emit` sie nimmt.
+- Qualitätssicherung: Transkripte des Protokolls als Golden-Dateien, API-Vergleich mit dem letzten Tag (`make api`),
+  Fuzzing auch der Batch-Zeilen und der Konfiguration, Stresstests mit vielen Strömen, Abbrüchen und Ende von stdin,
+  Tests gegen Runnel auch unter Windows.
