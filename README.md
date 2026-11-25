@@ -12,7 +12,7 @@ von Runnel, nicht dieses SDK.
 | Modul | `github.com/runnelhq/sdk-go`, Paket `runnel` |
 | Protokoll | Version 1: `initialize`, `describe`, `action.execute`, `connection.test`, Transforms als Strom (`transform.open/batch/end/emit/closed`, `$/ack`), `transform.init`, `transform.detectFields`, `$/cancelRequest`, `shutdown` |
 | Runnel | Actions und Connection-Typen ab S49c, Transforms ab S50a, `init`/`detectFields` ab S50b |
-| Lizenz | MIT |
+| Lizenz | MIT; ohne Abhängigkeiten außer der Go-Standardbibliothek, Plugins erben also keine fremden Lizenzen (die CI prüft das mit `make deps`) |
 
 ## Ein Plugin in fünf Minuten
 

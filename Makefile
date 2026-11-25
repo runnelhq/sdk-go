@@ -6,7 +6,7 @@ FUZZTIME      ?= 30s
 # Runnel für die Tests gegen den Host, z. B. RUNNEL_BIN=../runnel/bin/runnel
 RUNNEL_BIN    ?=
 
-.PHONY: test lint fmt fuzz bench runnel-test
+.PHONY: test lint fmt fuzz bench deps runnel-test
 
 ## test: alle Tests mit Race-Detector (Tests gegen Runnel nur mit RUNNEL_BIN)
 test:
@@ -16,6 +16,10 @@ test:
 lint:
 	$(GOLANGCI_LINT) run ./...
 	GOOS=windows $(GOLANGCI_LINT) run ./...
+
+## deps: prüfen, dass das SDK keine Abhängigkeiten hat (nur die Go-Standardbibliothek)
+deps:
+	scripts/check-no-deps.sh
 
 ## fmt: Quelltext formatieren
 fmt:
