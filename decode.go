@@ -12,7 +12,7 @@ import (
 // decode converts the configuration Runnel sent (JSON) into the struct of the action or
 // connection type. Texts in fields of type integer, number or boolean are converted first:
 // after Runnel resolves ${…} and {{ … }}, a number from a variable may arrive as text.
-func decode(data json.RawMessage, s *Schema, target any) error {
+func decode(data json.RawMessage, s *ConfigSchema, target any) error {
 	if len(data) == 0 || string(data) == "null" {
 		data = json.RawMessage("{}")
 	}
@@ -31,7 +31,7 @@ func decode(data json.RawMessage, s *Schema, target any) error {
 	return nil
 }
 
-func coerce(s *Schema, v any) any {
+func coerce(s *ConfigSchema, v any) any {
 	if s == nil {
 		return v
 	}
@@ -63,7 +63,7 @@ func coerce(s *Schema, v any) any {
 		for k, item := range val {
 			if ps, ok := s.Properties.Lookup(k); ok {
 				val[k] = coerce(ps, item)
-			} else if as, ok := s.AdditionalProperties.(*Schema); ok {
+			} else if as, ok := s.AdditionalProperties.(*ConfigSchema); ok {
 				val[k] = coerce(as, item)
 			}
 		}
@@ -77,7 +77,7 @@ func coerce(s *Schema, v any) any {
 
 // decodeLenient is decode for transform.init, where values may still be ${…}: a field
 // whose value does not fit is left at its zero value.
-func decodeLenient(data json.RawMessage, s *Schema, target any) {
+func decodeLenient(data json.RawMessage, s *ConfigSchema, target any) {
 	var raw map[string]any
 	if json.Unmarshal(data, &raw) != nil || raw == nil {
 		return

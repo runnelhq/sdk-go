@@ -99,10 +99,10 @@ func greetRecords(ctx context.Context, s *runnel.Stream, c greetFieldConfig) err
 			}
 			good = append(good, append(row, fmt.Sprintf("%s, %s!", c.Greeting, name)))
 		}
-		if err := s.Emit(ctx, runnel.Main, out, good); err != nil {
+		if err := s.Emit(ctx, runnel.ToMain, out, good); err != nil {
 			return err
 		}
-		if err := s.Emit(ctx, runnel.Error, runnel.ErrorFields(b.Fields), bad); err != nil {
+		if err := s.Emit(ctx, runnel.ToError, runnel.ErrorFields(b.Fields), bad); err != nil {
 			return err
 		}
 	}

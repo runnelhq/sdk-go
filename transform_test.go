@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	runnel "github.com/runnelhq/sdk-go"
 	"github.com/runnelhq/sdk-go/runneltest"
@@ -54,13 +55,13 @@ func newTransformDemo() *runnel.Plugin {
 						main = append(main, row)
 					}
 				}
-				if err := s.Emit(ctx, runnel.Main, b.Fields, main); err != nil {
+				if err := s.Emit(ctx, runnel.ToMain, b.Fields, main); err != nil {
 					return err
 				}
 				if err := s.Emit(ctx, c.Bad, b.Fields, routed); err != nil {
 					return err
 				}
-				if err := s.Emit(ctx, runnel.Error, runnel.ErrorFields(b.Fields), bad); err != nil {
+				if err := s.Emit(ctx, runnel.ToError, runnel.ErrorFields(b.Fields), bad); err != nil {
 					return err
 				}
 			}
@@ -81,7 +82,7 @@ func newTransformDemo() *runnel.Plugin {
 			for i := 1; i <= c.Count; i++ {
 				rows = append(rows, []any{i, fmt.Sprintf("row %d", i), c.Server.Host})
 				if len(rows) == 10 || i == c.Count {
-					if err := s.Emit(ctx, runnel.Main, fields, rows); err != nil {
+					if err := s.Emit(ctx, runnel.ToMain, fields, rows); err != nil {
 						return err
 					}
 					rows = nil
@@ -142,7 +143,7 @@ func TestTransformStream(t *testing.T) {
 	if err != nil || res.Error != "" {
 		t.Fatalf("stream: %v %q", err, res.Error)
 	}
-	main, errs, routed := res.Records(runnel.Main), res.Records(runnel.Error), res.Records("rejected")
+	main, errs, routed := res.Records(runnel.ToMain), res.Records(runnel.ToError), res.Records("rejected")
 	if len(main) != 20 || len(errs) != 20 || len(routed) != 20 {
 		t.Fatalf("main %d, error %d, routed %d", len(main), len(errs), len(routed))
 	}
@@ -176,7 +177,7 @@ func TestTransformInput(t *testing.T) {
 	if err != nil || res.Error != "" {
 		t.Fatalf("input: %v %q", err, res.Error)
 	}
-	recs := res.Records(runnel.Main)
+	recs := res.Records(runnel.ToMain)
 	if len(recs) != 95 || recs[94]["n"] != 95.0 || recs[94]["host"] != "example.org" || len(res.Emits) != 10 {
 		t.Errorf("records %d, emits %d, last %v", len(recs), len(res.Emits), recs[len(recs)-1])
 	}
@@ -191,8 +192,8 @@ func TestTransformParallelStreams(t *testing.T) {
 	for range 3 {
 		go func() {
 			res, err := c.RunTransform("demo.count", map[string]any{"count": 200})
-			if err == nil && len(res.Records(runnel.Main)) != 200 {
-				err = fmt.Errorf("%d records", len(res.Records(runnel.Main)))
+			if err == nil && len(res.Records(runnel.ToMain)) != 200 {
+				err = fmt.Errorf("%d records", len(res.Records(runnel.ToMain)))
 			}
 			done <- err
 		}()
@@ -253,4 +254,66 @@ func BenchmarkTransformStream(b *testing.B) {
 		}
 	}
 	b.ReportMetric(float64(b.N*20*500)/b.Elapsed().Seconds(), "records/s")
+}
+
+// Next returns the values in the Go types of their fields; Emit takes them back.
+func TestTransformValueTypes(t *testing.T) {
+	p := runnel.New("demo", "1.0.0")
+	runnel.AddTransform(p, runnel.Transform[struct{}]{
+		Type: "demo.types", Label: "Types", Description: "Writes the Go types of the values",
+		Run: func(ctx context.Context, s *runnel.Stream, _ struct{}) error {
+			for {
+				b, ok, err := s.Next(ctx)
+				if err != nil || !ok {
+					return err
+				}
+				var out [][]any
+				for _, row := range b.Rows {
+					var types []any
+					for _, v := range row {
+						types = append(types, fmt.Sprintf("%T", v))
+					}
+					out = append(out, types, row) // the values go back unchanged as well
+				}
+				if err := s.Emit(ctx, runnel.ToMain, b.Fields, out); err != nil {
+					return err
+				}
+			}
+		},
+	})
+	c := runneltest.Start(t, p)
+	at := time.Date(2026, 11, 24, 10, 30, 0, 500, time.FixedZone("", 3600))
+	fields := runnel.Fields{{"i", runnel.TypeInt}, {"f", runnel.TypeFloat}, {"d", runnel.TypeDecimal}, {"day", runnel.TypeDate},
+		{"at", runnel.TypeDatetime}, {"raw", runnel.TypeBinary}, {"doc", runnel.TypeJSON}, {"any", ""}, {"none", runnel.TypeDatetime}}
+	res, err := c.RunTransform("demo.types", map[string]any{}, runnel.Batch{Fields: fields, Rows: [][]any{
+		{7, 2, "12.50", "2026-11-24", at, []byte{0, 1, 255}, map[string]any{"k": 1}, 3, nil},
+	}})
+	if err != nil || res.Error != "" {
+		t.Fatal(err, res.Error)
+	}
+	recs := res.Records(runnel.ToMain)
+	want := map[string]any{"i": "int64", "f": "float64", "d": "string", "day": "string", "at": "time.Time", "raw": "[]uint8",
+		"doc": "map[string]interface {}", "any": "int64", "none": "<nil>"}
+	for k, v := range want {
+		if recs[0][k] != v {
+			t.Errorf("%s: %v, want %v", k, recs[0][k], v)
+		}
+	}
+	// Back on the wire: datetime as RFC 3339 with offset, binary as Base64.
+	if recs[1]["at"] != "2026-11-24T10:30:00.0000005+01:00" || recs[1]["raw"] != "AAH/" || recs[1]["d"] != "12.50" {
+		t.Errorf("values back: %v", recs[1])
+	}
+	for _, tt := range []struct {
+		field runnel.Field
+		value any
+		want  string
+	}{
+		{runnel.Field{Name: "at", Type: runnel.TypeDatetime}, "yesterday", `row 1 of a batch: field "at": "yesterday" is not a date and time (RFC 3339)`},
+		{runnel.Field{Name: "raw", Type: runnel.TypeBinary}, "not base64!", `row 1 of a batch: field "raw": the value is not Base64`},
+	} {
+		res, err := c.RunTransform("demo.types", map[string]any{}, runnel.Batch{Fields: runnel.Fields{tt.field}, Rows: [][]any{{tt.value}}})
+		if err != nil || res.Error != tt.want {
+			t.Errorf("%s: %v %q, want %q", tt.field.Name, err, res.Error, tt.want)
+		}
+	}
 }

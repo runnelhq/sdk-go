@@ -28,7 +28,7 @@ type StreamResult struct {
 	Error string
 }
 
-// Records returns the rows sent to a target (runnel.Main, runnel.Error or an id) as maps
+// Records returns the rows sent to a target (runnel.ToMain, runnel.ToError or an id) as maps
 // from field name to value; numbers are float64 as in JSON.
 func (r StreamResult) Records(to string) []map[string]any {
 	var out []map[string]any
