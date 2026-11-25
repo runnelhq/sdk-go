@@ -53,8 +53,15 @@ jobs:
         run: go test -race ./...
 
   runnel:
-    name: Test against Runnel (main)
-    runs-on: ubuntu-latest
+    name: Test against Runnel (main, ${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v7
       - uses: actions/checkout@v7
@@ -66,9 +73,27 @@ jobs:
           go-version-file: runnel/go.mod
           check-latest: true
       - name: Build Runnel (without editor)
-        run: make -C runnel build-go
+        run: cd runnel && go build -o "bin/runnel$(go env GOEXE)" ./cmd/runnel
       - name: Test the example plugin in Runnel
-        run: make runnel-test RUNNEL_BIN=runnel/bin/runnel
+        run: |
+          bin="$PWD/runnel/bin/runnel$(go env GOEXE)"
+          # On Windows, Go needs a Windows path, not the one of Git Bash.
+          if command -v cygpath >/dev/null; then bin="$(cygpath -m "$bin")"; fi
+          RUNNEL_BIN="$bin" go test -count=1 -run WithRunnel ./...
+
+  api:
+    name: API compatible with the last release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # the release tags
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: apidiff against the last tag
+        run: make api
 
   vulncheck:
     name: Vulnerability check
@@ -92,4 +117,5 @@ jobs:
         with:
           go-version-file: go.mod
           check-latest: true
-      - run: make fuzz FUZZTIME=5m
+      - name: Fuzz the protocol, batches and configuration (5 minutes each)
+        run: make fuzz FUZZTIME=5m

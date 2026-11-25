@@ -1,4 +1,4 @@
-# Go-SDK für Runnel-Plugins. Ziele: make test | lint | fuzz | bench | runnel-test
+# Go-SDK für Runnel-Plugins. Ziele: make test | lint | fuzz | bench | api | golden | deps | runnel-test
 GOLANGCI_LINT_VERSION := v2.15.0
 # Ohne passendes golangci-lint im PATH: make lint GOLANGCI_LINT=bin/tools/golangci-lint
 GOLANGCI_LINT ?= golangci-lint
@@ -6,7 +6,7 @@ FUZZTIME      ?= 30s
 # Runnel für die Tests gegen den Host, z. B. RUNNEL_BIN=../runnel/bin/runnel
 RUNNEL_BIN    ?=
 
-.PHONY: test lint fmt fuzz bench deps runnel-test
+.PHONY: test lint fmt fuzz bench api golden deps runnel-test
 
 ## test: alle Tests mit Race-Detector (Tests gegen Runnel nur mit RUNNEL_BIN)
 test:
@@ -25,9 +25,19 @@ deps:
 fmt:
 	$(GOLANGCI_LINT) fmt ./...
 
-## fuzz: Protokoll-Schleife mit zufälligen Eingaben
+## fuzz: Protokoll-Schleife, Zeilen der Batches und Konfiguration mit zufälligen Eingaben (je FUZZTIME)
 fuzz:
-	go test -run '^$$' -fuzz FuzzServe -fuzztime $(FUZZTIME) .
+	go test -run '^$$' -fuzz '^FuzzServe$$' -fuzztime $(FUZZTIME) .
+	go test -run '^$$' -fuzz '^FuzzDecodeRow$$' -fuzztime $(FUZZTIME) .
+	go test -run '^$$' -fuzz '^FuzzDecodeConfig$$' -fuzztime $(FUZZTIME) .
+
+## api: Go-API mit dem letzten Release-Tag vergleichen; Inkompatibles nur mit Eintrag im CHANGELOG
+api:
+	scripts/apicheck.sh
+
+## golden: Transkripte des Protokolls (testdata/protocol) neu schreiben; danach den Diff prüfen
+golden:
+	go test -count=1 -run TestGoldenTranscripts -update .
 
 ## bench: Durchsatz eines Transforms über das Protokoll (ohne Runnel)
 bench:
