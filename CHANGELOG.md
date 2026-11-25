@@ -9,3 +9,8 @@
 - `runneltest`: Client für Tests ohne Runnel (`RunTransform`, `Init`, `DetectFields`), `NewProject` für Tests gegen
   Runnel (`RUNNEL_BIN`).
 - Beispiel-Plugin `examples/hello` mit Action und Transform.
+- Robustheit vor dem ersten Release:
+  - Mehr Batches als das Fenster beenden den Strom mit Fehler, statt Records zu verwerfen.
+  - `Main` leitet `os.Stdout` auf stderr um; Ausgaben mit `fmt.Println` zerstören das Protokoll nicht mehr.
+  - `Emit` teilt Records, die nicht in eine Nachricht passen (16 MiB); ein zu großer Record und eine zu große Antwort
+    einer Action sind Fehlermeldungen, statt dass Runnel das Plugin beendet.
