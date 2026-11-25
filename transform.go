@@ -83,8 +83,12 @@ type Batch struct {
 type Transform[C any] struct {
 	// Type is "<namespace>.<name>", e.g. "iban.validate".
 	Type string
-	// Category is one of CategoryInput, CategoryTransform, CategoryFlow, CategoryExecution,
-	// CategoryCombine and CategoryOutput; empty means CategoryTransform.
+	// Category is optional: one of CategoryInput, CategoryTransform, CategoryFlow,
+	// CategoryExecution, CategoryCombine and CategoryOutput puts the transform into that
+	// group of the palette; empty puts it into a group of the plugin ("Plugin: <name>",
+	// Runnel after runnel#236; older versions show it under transform). Without category
+	// it behaves like one of CategoryTransform. An input (no incoming links) needs
+	// CategoryInput, so that the editor offers no link into it.
 	Category    string
 	Label       string
 	Description string
@@ -175,7 +179,7 @@ type transformEntry struct {
 type transformDescriptor struct {
 	Type         string        `json:"type"`
 	Kind         string        `json:"kind"`
-	Category     string        `json:"category"`
+	Category     string        `json:"category,omitempty"`
 	Label        string        `json:"label"`
 	Description  string        `json:"description"`
 	Schema       *ConfigSchema `json:"schema"`
@@ -198,10 +202,7 @@ func AddTransform[C any](p *Plugin, t Transform[C]) {
 	if slices.ContainsFunc(p.transforms, func(e *transformEntry) bool { return e.descriptor.Type == t.Type }) {
 		panic(fmt.Sprintf("runnel: transform type %q added twice", t.Type))
 	}
-	if t.Category == "" {
-		t.Category = CategoryTransform
-	}
-	if !slices.Contains(transformCategories, t.Category) {
+	if t.Category != "" && !slices.Contains(transformCategories, t.Category) {
 		panic(fmt.Sprintf("runnel: transform %q: unknown category %q", t.Type, t.Category))
 	}
 	if t.Label == "" || t.Description == "" || t.Run == nil {

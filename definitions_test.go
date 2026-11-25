@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	runnel "github.com/runnelhq/sdk-go"
+	"github.com/runnelhq/sdk-go/runneltest"
 )
 
 // mustPanic runs fn and checks that it panics with a message that contains want.
@@ -101,4 +102,31 @@ func TestAddConnectionTypeMistakes(t *testing.T) {
 	// Without Test, describe does not announce connection.test.
 	p := runnel.New("demo", "1.0.0")
 	runnel.AddConnectionType(p, ct("demo"))
+}
+
+// The category is optional: without one the descriptor has none, and Runnel groups the
+// type by the plugin; a known one is kept.
+func TestCategoryOptional(t *testing.T) {
+	p := runnel.New("demo", "1.0.0")
+	runAction := func(context.Context, *runnel.Call, struct{}) (any, error) { return nil, nil }
+	runTransform := func(context.Context, *runnel.Stream, struct{}) error { return nil }
+	runnel.AddAction(p, runnel.Action[struct{}]{Type: "demo.a", Label: "A", Description: "x", Run: runAction})
+	runnel.AddAction(p, runnel.Action[struct{}]{Type: "demo.b", Category: runnel.CategoryNetwork, Label: "B", Description: "x", Run: runAction})
+	runnel.AddTransform(p, runnel.Transform[struct{}]{Type: "demo.t", Label: "T", Description: "x", Run: runTransform})
+	runnel.AddTransform(p, runnel.Transform[struct{}]{Type: "demo.in", Category: runnel.CategoryInput, Label: "In", Description: "x", Run: runTransform})
+	c := runneltest.Start(t, p)
+	raw, err := c.Call("describe", map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`{"type":"demo.a","kind":"action","label":"A"`,
+		`{"type":"demo.b","kind":"action","category":"network","label":"B"`,
+		`{"type":"demo.t","kind":"transform","label":"T"`,
+		`{"type":"demo.in","kind":"transform","category":"input","label":"In"`,
+	} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("describe lacks %s:\n%s", want, raw)
+		}
+	}
 }
