@@ -89,7 +89,7 @@ type Action[C any] struct {
 	// Example is optional YAML of the action for the help in the editor.
 	Example string
 	// Reference is optional: the parts of the output, when the action fails and its
-	// limits, for runnel catalog, the reference and the help in the editor (Records is for
+	// limits, for the catalog of a project and the help in the editor (Records is for
 	// transforms only). runneltest.CheckReference checks the texts.
 	Reference
 	// Run executes the action with the configuration that Runnel checked and resolved
@@ -151,9 +151,9 @@ type actionDescriptor struct {
 
 // Reference documents what an action or a transform gives, when it fails and its limits,
 // as Runnel does for its own (ADR 0014, E15b). All parts are optional; Runnel shows them in
-// runnel catalog, the reference and the help in the editor. Texts are English: Records,
-// Errors and Limits sentences with a final period, the description of an output one phrase
-// without.
+// the catalog of a project (GET /api/v1/catalog of runnel serve) and the help in the
+// editor. Texts are English: Records, Errors and Limits sentences with a final period, the
+// description of an output one phrase without.
 type Reference struct {
 	// Outputs are, for an action, the parts of result.output by their path, e.g.
 	// "output.valid" or "output[].dn" ("output" for the whole value), with a type of

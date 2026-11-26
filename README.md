@@ -81,8 +81,9 @@ unter „General“ bzw. „Transform“.
 ## Referenz: Ergebnis, Fehler, Grenzen
 
 Wie die eingebauten Bausteine beschreiben Actions und Transforms optional, was sie liefern, wann sie scheitern und
-welche Grenzen gelten (ADR 0014 von Runnel, E15b). Runnel zeigt das in `runnel catalog`, in der Referenz und in der
-Hilfe des Editors:
+welche Grenzen gelten (ADR 0014 von Runnel, E15b). Runnel übernimmt es in den Katalog des Projekts
+(`GET /api/v1/catalog` von `runnel serve`) und zeigt es in der Hilfe des Editors (`runnel catalog` kennt nur
+eingebaute Bausteine):
 
 ```go
 runnel.AddAction(p, runnel.Action[greetConfig]{
