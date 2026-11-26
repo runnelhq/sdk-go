@@ -46,6 +46,9 @@ const (
 	TypeJSON     = "json"
 )
 
+// fieldTypes are the field types above.
+var fieldTypes = []string{TypeString, TypeInt, TypeFloat, TypeDecimal, TypeBool, TypeDate, TypeDatetime, TypeBinary, TypeJSON}
+
 // Field is a field of records: name and type.
 type Field struct {
 	Name string `json:"name"`
@@ -93,6 +96,9 @@ type Transform[C any] struct {
 	Label       string
 	Description string
 	Example     string
+	// Reference is optional: the fields the transform sets, which records it passes on
+	// over which links, when it fails and its limits (see Reference).
+	Reference
 	// RecordErrors: the transform may have an error link (Emit to ToError).
 	RecordErrors bool
 	// Parallel: the transform may run in several copies (copies: in the pipeline).
@@ -188,6 +194,7 @@ type transformDescriptor struct {
 	Parallel     bool          `json:"parallel,omitempty"`
 	Init         bool          `json:"init,omitempty"`
 	DetectFields bool          `json:"detectFields,omitempty"`
+	Reference
 }
 
 // AddTransform adds a transform to the plugin. Like AddAction, it panics on mistakes in
@@ -208,6 +215,7 @@ func AddTransform[C any](p *Plugin, t Transform[C]) {
 	if t.Label == "" || t.Description == "" || t.Run == nil {
 		panic(fmt.Sprintf("runnel: transform %q needs a label, a description and Run", t.Type))
 	}
+	checkReference("transform", t.Type, t.Reference)
 	var zero C
 	s, err := ConfigSchemaFor(zero)
 	if err != nil {
@@ -215,7 +223,7 @@ func AddTransform[C any](p *Plugin, t Transform[C]) {
 	}
 	e := &transformEntry{
 		descriptor: transformDescriptor{Type: t.Type, Kind: "transform", Category: t.Category, Label: t.Label, Description: t.Description,
-			Schema: s, Example: t.Example, RecordErrors: t.RecordErrors, Parallel: t.Parallel, Init: t.Init != nil, DetectFields: t.DetectFields != nil},
+			Schema: s, Example: t.Example, RecordErrors: t.RecordErrors, Parallel: t.Parallel, Init: t.Init != nil, DetectFields: t.DetectFields != nil, Reference: t.Reference},
 		run: func(ctx context.Context, st *Stream, raw json.RawMessage) error {
 			var config C
 			if err := decode(raw, s, &config); err != nil {
@@ -386,7 +394,7 @@ func (s *Stream) Emit(ctx context.Context, to string, fields Fields, rows [][]an
 	if fields == nil {
 		fields = Fields{} // [] means records without fields; null would mean "as before"
 	}
-	data, err := json.Marshal(emitMessage{JSONRPC: "2.0", Method: "transform.emit", Params: emitParams{Stream: s.id, To: to, Fields: fields, Rows: rows}})
+	data, err := encode(emitMessage{JSONRPC: "2.0", Method: "transform.emit", Params: emitParams{Stream: s.id, To: to, Fields: fields, Rows: rows}})
 	if err != nil {
 		return fmt.Errorf("cannot encode the records for %q: %w", to, err)
 	}

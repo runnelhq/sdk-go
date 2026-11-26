@@ -43,6 +43,11 @@ func TestGreetRecords(t *testing.T) {
 	}
 }
 
+// TestReference checks the reference of both types (output, errors, records).
+func TestReference(t *testing.T) {
+	runneltest.CheckReference(t, newPlugin())
+}
+
 func TestVersionMatchesPluginYAML(t *testing.T) {
 	data, err := os.ReadFile("plugin.yaml")
 	if err != nil {

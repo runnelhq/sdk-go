@@ -32,6 +32,13 @@ func newPlugin() *runnel.Plugin {
 		Label:       "Greet",
 		Description: "Returns a greeting for a name",
 		Example:     "type: hello.greet\nwith:\n  name: World\n",
+		Reference: runnel.Reference{
+			Outputs: []runnel.OutputField{
+				{Name: "output.message", Type: "string", Description: "The greeting, e.g. Hello, World!"},
+				{Name: "output.length", Type: "integer", Description: "Number of bytes of the greeting"},
+			},
+			Errors: "Fails when name is empty.",
+		},
 		Run: func(_ context.Context, call *runnel.Call, c greetConfig) (any, error) {
 			if strings.TrimSpace(c.Name) == "" {
 				return nil, fmt.Errorf("name is empty")
@@ -49,10 +56,15 @@ func newPlugin() *runnel.Plugin {
 		},
 	})
 	runnel.AddTransform(p, runnel.Transform[greetFieldConfig]{
-		Type:         "hello.greet",
-		Label:        "Greet",
-		Description:  "Adds a greeting for the name in a field of every record",
-		Example:      "type: hello.greet\nwith:\n  field: name\n  target: greeting\n",
+		Type:        "hello.greet",
+		Label:       "Greet",
+		Description: "Adds a greeting for the name in a field of every record",
+		Example:     "type: hello.greet\nwith:\n  field: name\n  target: greeting\n",
+		Reference: runnel.Reference{
+			Outputs: []runnel.OutputField{{Name: "<target>", Type: runnel.TypeString, Description: "The greeting for the name"}},
+			Records: "Passes every record with a name to the data links, with the greeting as a new field.",
+			Errors:  "Records with an empty name go to the error link (without error link the pipeline stops). Fails when field is not in the records.",
+		},
 		RecordErrors: true,
 		Parallel:     true,
 		Run:          greetRecords,

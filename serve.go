@@ -136,8 +136,20 @@ var maxMessage = MaxMessageSize
 // fits reports whether a message (without its newline) is within the limit of Runnel.
 func fits(data []byte) bool { return len(data)+1 <= maxMessage }
 
+// encode writes a message as JSON without escaping <, > and & (as \u003c …): the texts
+// of references contain them (e.g. "<field>"), and other SDKs write them as they are.
+func encode(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
+}
+
 func (s *server) send(v any) {
-	data, err := json.Marshal(v)
+	data, err := encode(v)
 	if err != nil {
 		data, _ = json.Marshal(map[string]any{"jsonrpc": "2.0", "id": nil, "error": rpcError{CodeActionFailed, "cannot encode the answer"}})
 	}
@@ -154,7 +166,7 @@ func (s *server) sendRaw(data []byte) {
 }
 
 func (s *server) reply(id json.RawMessage, result any) {
-	data, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "result": result})
+	data, err := encode(map[string]any{"jsonrpc": "2.0", "id": id, "result": result})
 	if err != nil {
 		s.fail(id, CodeActionFailed, fmt.Sprintf("the plugin cannot encode its result: %v", err))
 		return

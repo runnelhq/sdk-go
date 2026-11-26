@@ -1,5 +1,17 @@
 # Änderungen
 
+## Unveröffentlicht (v0.3.0)
+
+- **Neu:** `Reference` in `Action` und `Transform` (`Outputs`, `Records`, `Errors`, `Limits`) beschreibt Ergebnis,
+  Fehler und Grenzen wie bei den eingebauten Bausteinen (ADR 0014 von Runnel, E15b); `describe` liefert sie als
+  `outputs`, `records`, `errors` und `limits`. `AddAction`/`AddTransform` lehnen unbekannte Typen und `Records` an einer
+  Action mit `panic` ab; `runnel.OutputTypes()` nennt die Typen der Ausgaben von Actions.
+- **Neu:** `runneltest.CheckReference` prüft die Referenzen eines Plugins mit den Regeln der Vertragstests von Runnel
+  (freiwillig, z. B. in einem eigenen Test).
+- **Geändert:** Nachrichten an Runnel schreiben `<`, `>` und `&` unverändert statt als `\u003c` usw. (gleiches JSON,
+  wie im Rust-SDK); so stehen Namen wie `<field>` lesbar im Transkript.
+- Beispiel `hello` mit Referenz und `TestReference`.
+
 ## v0.2.1 (2026-11-26)
 
 - **Behoben:** IDs nach ADR 0019 (Nachtrag 2026-11-26): Eine Anfrage, deren ID weder eine ganze Zahl im Bereich von

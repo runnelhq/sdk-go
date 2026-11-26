@@ -88,6 +88,10 @@ type Action[C any] struct {
 	Description string
 	// Example is optional YAML of the action for the help in the editor.
 	Example string
+	// Reference is optional: the parts of the output, when the action fails and its
+	// limits, for runnel catalog, the reference and the help in the editor (Records is for
+	// transforms only). runneltest.CheckReference checks the texts.
+	Reference
 	// Run executes the action with the configuration that Runnel checked and resolved
 	// (variables, expressions, connections). Its result is result.output in the workflow
 	// (text, number, list, map or struct). An error fails the action with its message.
@@ -142,6 +146,67 @@ type actionDescriptor struct {
 	Description string        `json:"description"`
 	Schema      *ConfigSchema `json:"schema"`
 	Example     string        `json:"example,omitempty"`
+	Reference
+}
+
+// Reference documents what an action or a transform gives, when it fails and its limits,
+// as Runnel does for its own (ADR 0014, E15b). All parts are optional; Runnel shows them in
+// runnel catalog, the reference and the help in the editor. Texts are English: Records,
+// Errors and Limits sentences with a final period, the description of an output one phrase
+// without.
+type Reference struct {
+	// Outputs are, for an action, the parts of result.output by their path, e.g.
+	// "output.valid" or "output[].dn" ("output" for the whole value), with a type of
+	// OutputTypes; for a transform, the fields it adds or changes, with a field type (e.g.
+	// TypeString) or "any". A name from the configuration is written as the path of its
+	// field in angle brackets, e.g. "<countryField>" or "<fields[].name>".
+	Outputs []OutputField `json:"outputs,omitempty"`
+	// Records tells, for a transform only, which records it passes on and over which links
+	// (data links, targets, error link).
+	Records string `json:"records,omitempty"`
+	// Errors tells when the action or transform fails and, for a transform, which records
+	// go to the error link.
+	Errors string `json:"errors,omitempty"`
+	// Limits are limits of size, number and time, with their defaults.
+	Limits []string `json:"limits,omitempty"`
+}
+
+// OutputField is a part of the output of an action or a field set by a transform.
+type OutputField struct {
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	Description string `json:"description"`
+}
+
+// OutputTypes are the types of the outputs of actions, as expressions of Runnel see them.
+// Outputs of transforms have a field type (TypeString …) or "any".
+func OutputTypes() []string {
+	return []string{"string", "integer", "number", "boolean", "datetime", "list", "object", "any"}
+}
+
+// outputTypes returns the types an output of an action or a transform may have.
+func outputTypes(kind string) []string {
+	if kind == "transform" {
+		return append(slices.Clone(fieldTypes), "any")
+	}
+	return OutputTypes()
+}
+
+// checkReference panics on mistakes in a reference that Runnel could not show; the style
+// of the texts is checked by runneltest.CheckReference.
+func checkReference(kind, typ string, r Reference) {
+	if kind == "action" && r.Records != "" {
+		panic(fmt.Sprintf("runnel: action %q: Records is for transforms only", typ))
+	}
+	types := outputTypes(kind)
+	for _, o := range r.Outputs {
+		if o.Name == "" {
+			panic(fmt.Sprintf("runnel: %s %q: an output without name", kind, typ))
+		}
+		if !slices.Contains(types, o.Type) {
+			panic(fmt.Sprintf("runnel: %s %q: output %q has type %q, not one of %s", kind, typ, o.Name, o.Type, strings.Join(types, ", ")))
+		}
+	}
 }
 
 type connectionDescriptor struct {
@@ -174,13 +239,14 @@ func AddAction[C any](p *Plugin, a Action[C]) {
 	if a.Run == nil {
 		panic(fmt.Sprintf("runnel: action %q has no Run", a.Type))
 	}
+	checkReference("action", a.Type, a.Reference)
 	var zero C
 	s, err := ConfigSchemaFor(zero)
 	if err != nil {
 		panic(fmt.Sprintf("runnel: action %q: %v", a.Type, err))
 	}
 	p.actions = append(p.actions, &actionEntry{
-		descriptor: actionDescriptor{Type: a.Type, Kind: "action", Category: a.Category, Label: a.Label, Description: a.Description, Schema: s, Example: a.Example},
+		descriptor: actionDescriptor{Type: a.Type, Kind: "action", Category: a.Category, Label: a.Label, Description: a.Description, Schema: s, Example: a.Example, Reference: a.Reference},
 		run: func(ctx context.Context, call *Call, raw json.RawMessage) (any, error) {
 			var config C
 			if err := decode(raw, s, &config); err != nil {

@@ -27,4 +27,8 @@
 // with Stream.Emit; the SDK keeps to the credits of the protocol in both directions and
 // offers transform.init and transform.detectFields when the transform defines Init and
 // DetectFields.
+//
+// A Reference in Action and Transform optionally documents the output, the errors and the
+// limits for runnel catalog and the help in the editor; runneltest.CheckReference checks
+// it with the rules Runnel applies to its own types.
 package runnel

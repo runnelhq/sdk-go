@@ -11,7 +11,7 @@ von Runnel, nicht dieses SDK.
 |---|---|
 | Modul | `github.com/runnelhq/sdk-go`, Paket `runnel` |
 | Protokoll | Version 1: `initialize`, `describe`, `action.execute`, `connection.test`, Transforms als Strom (`transform.open/batch/end/emit/closed`, `$/ack`), `transform.init`, `transform.detectFields`, `$/cancelRequest`, `shutdown` |
-| Runnel | Actions und Connection-Typen ab S49c, Transforms ab S50a, `init`/`detectFields` ab S50b |
+| Runnel | Actions und Connection-Typen ab S49c, Transforms ab S50a, `init`/`detectFields` ab S50b, Referenz (`outputs`, `records`, `errors`, `limits`) ab E15b |
 | Lizenz | MIT; ohne Abhängigkeiten außer der Go-Standardbibliothek, Plugins erben also keine fremden Lizenzen (die CI prüft das mit `make deps`) |
 
 ## Ein Plugin in fünf Minuten
@@ -77,6 +77,45 @@ actions:
 
 Eine Eingabe (ohne eingehende Links) braucht `CategoryInput`. Runnel vor runnel#236 zeigt Bausteine ohne Kategorie
 unter „General“ bzw. „Transform“.
+
+## Referenz: Ergebnis, Fehler, Grenzen
+
+Wie die eingebauten Bausteine beschreiben Actions und Transforms optional, was sie liefern, wann sie scheitern und
+welche Grenzen gelten (ADR 0014 von Runnel, E15b). Runnel zeigt das in `runnel catalog`, in der Referenz und in der
+Hilfe des Editors:
+
+```go
+runnel.AddAction(p, runnel.Action[greetConfig]{
+	Type: "hello.greet", Label: "Greet", Description: "Returns a greeting for a name",
+	Reference: runnel.Reference{
+		Outputs: []runnel.OutputField{
+			{Name: "output.message", Type: "string", Description: "The greeting, e.g. Hello, World!"},
+			{Name: "output.length", Type: "integer", Description: "Number of bytes of the greeting"},
+		},
+		Errors: "Fails when name is empty.",
+	},
+	Run: …,
+})
+```
+
+| Feld | Inhalt |
+|---|---|
+| `Outputs` | Actions: Teile von `result.output` mit Pfad (`output`, `output.valid`, `output[].dn`) und Typ aus `runnel.OutputTypes()` (`string`, `integer`, `number`, `boolean`, `datetime`, `list`, `object`, `any`). Transforms: Felder, die sie setzen, mit Feldtyp (`runnel.TypeString` …) oder `any`; ein Name aus der Konfiguration als `<feld>`, z. B. `<target>` oder `<fields[].name>` |
+| `Records` | nur Transforms: welche Datensätze sie über welche Links weitergeben (Daten-Links, Ziele, Fehler-Link) |
+| `Errors` | wann der Baustein scheitert, bei Transforms was auf den Fehler-Link geht |
+| `Limits` | Grenzen für Größe, Anzahl und Zeit mit Standardwerten |
+
+Texte englisch; `Records`, `Errors` und `Limits` als Sätze mit Punkt, die Beschreibung eines Ausgabefelds ohne Punkt.
+`AddAction`/`AddTransform` lehnen mit `panic` ab, was Runnel nicht zeigen kann (unbekannter Typ, `Records` an einer
+Action). Den Rest prüft auf Wunsch ein Test mit denselben Regeln wie die Vertragstests von Runnel:
+
+```go
+func TestReference(t *testing.T) { runneltest.CheckReference(t, newPlugin()) }
+```
+
+Er verlangt `Errors` für jeden Baustein und `Records` für jeden Transform und prüft Sätze, Pfade, Typen und die Namen in
+`<…>` gegen das Schema. Ob eine Action mit Ergebnis `Outputs` beschreibt, kann er nicht wissen. Runnel vor E15b ignoriert
+die Schlüssel.
 
 ## Konfiguration als Struct
 
