@@ -1,6 +1,6 @@
 # Änderungen
 
-## Unveröffentlicht
+## v0.2.1 (2026-11-26)
 
 - **Behoben:** IDs nach ADR 0019 (Nachtrag 2026-11-26): Eine Anfrage, deren ID weder eine ganze Zahl im Bereich von
   int64 noch ein Text ist (z. B. `1e999`, `1.5`, `true`, ein Objekt), beantwortet das SDK mit `-32600` und
