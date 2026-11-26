@@ -1,6 +1,6 @@
 # Änderungen
 
-## Unveröffentlicht (v0.3.0)
+## v0.3.0 (2026-11-26)
 
 - **Neu:** `Reference` in `Action` und `Transform` (`Outputs`, `Records`, `Errors`, `Limits`) beschreibt Ergebnis,
   Fehler und Grenzen wie bei den eingebauten Bausteinen (ADR 0014 von Runnel, E15b); `describe` liefert sie als
