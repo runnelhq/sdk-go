@@ -333,43 +333,78 @@ func FuzzServe(f *testing.F) {
 	})
 }
 
+// pipeConn serves a plugin on pipes, so that a test sends the next line only after an
+// answer arrived (closing stdin early would end the plugin before it works).
+type pipeConn struct {
+	t    *testing.T
+	in   *io.PipeWriter
+	sc   *bufio.Scanner
+	done chan error
+}
+
+func servePipe(t *testing.T, p *runnel.Plugin) *pipeConn {
+	t.Helper()
+	inR, inW := io.Pipe()
+	outR, outW := io.Pipe()
+	c := &pipeConn{t: t, in: inW, sc: bufio.NewScanner(outR), done: make(chan error, 1)}
+	go func() { c.done <- p.Serve(context.Background(), inR, outW, io.Discard); _ = outW.Close() }()
+	return c
+}
+
+func (c *pipeConn) write(line string) {
+	c.t.Helper()
+	if _, err := io.WriteString(c.in, line+"\n"); err != nil {
+		c.t.Fatal(err)
+	}
+}
+
+func (c *pipeConn) read() map[string]any {
+	c.t.Helper()
+	if !c.sc.Scan() {
+		c.t.Fatalf("no answer: %v", c.sc.Err())
+	}
+	var m map[string]any
+	if err := json.Unmarshal(c.sc.Bytes(), &m); err != nil {
+		c.t.Fatalf("invalid answer %q", c.sc.Text())
+	}
+	return m
+}
+
+// readMethod reads until a message with the method.
+func (c *pipeConn) readMethod(method string) map[string]any {
+	c.t.Helper()
+	for {
+		if m := c.read(); m["method"] == method {
+			return m
+		}
+	}
+}
+
+func (c *pipeConn) close() {
+	c.t.Helper()
+	_ = c.in.Close()
+	go func() {
+		for c.sc.Scan() { // read the rest, so that the plugin does not block on writing
+		}
+	}()
+	if err := <-c.done; err != nil {
+		c.t.Fatal(err)
+	}
+}
+
 // TestCancelTextID cancels a request whose id is a text written differently in both
 // messages (ADR 0019: an id is a whole number or a text). encoding/json of Go 1.26 already
 // unescapes the id; the test keeps that true for other versions.
 func TestCancelTextID(t *testing.T) {
-	inR, inW := io.Pipe()
-	outR, outW := io.Pipe()
-	done := make(chan error, 1)
-	go func() { done <- newDemo().Serve(context.Background(), inR, outW, io.Discard); _ = outW.Close() }()
-	write := func(line string) {
-		t.Helper()
-		if _, err := io.WriteString(inW, line+"\n"); err != nil {
-			t.Fatal(err)
-		}
-	}
-	sc := bufio.NewScanner(outR)
-	read := func() map[string]any {
-		t.Helper()
-		if !sc.Scan() {
-			t.Fatalf("no answer: %v", sc.Err())
-		}
-		var m map[string]any
-		if err := json.Unmarshal(sc.Bytes(), &m); err != nil {
-			t.Fatalf("invalid answer %q", sc.Text())
-		}
-		return m
-	}
-	write(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}`)
-	read()
-	write(`{"jsonrpc":"2.0","id":"ab","method":"action.execute","params":{"type":"demo.echo","config":{"text":"hang"}}}`)
-	write(`{"jsonrpc":"2.0","method":"$/cancelRequest","params":{"id":"ab"}}`)
-	if m := read(); errorCode(m) != runnel.CodeRequestCancelled || m["id"] != "ab" {
+	c := servePipe(t, newDemo())
+	c.write(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}`)
+	c.read()
+	c.write(`{"jsonrpc":"2.0","id":"a\u0062","method":"action.execute","params":{"type":"demo.echo","config":{"text":"hang"}}}`)
+	c.write(`{"jsonrpc":"2.0","method":"$/cancelRequest","params":{"id":"ab"}}`)
+	if m := c.read(); errorCode(m) != runnel.CodeRequestCancelled || m["id"] != "ab" {
 		t.Errorf("answer = %v, want -32800 for id \"ab\"", m)
 	}
-	_ = inW.Close()
-	if err := <-done; err != nil {
-		t.Fatal(err)
-	}
+	c.close()
 }
 
 func TestEmitWithoutFields(t *testing.T) {
@@ -388,24 +423,18 @@ func TestEmitWithoutFields(t *testing.T) {
 			}
 		},
 	})
-	answers, err := serveLines(t, p,
-		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}`,
-		`{"jsonrpc":"2.0","id":2,"method":"transform.open","params":{"stream":1,"type":"demo.none","config":{},"emitWindow":4}}`,
-		`{"jsonrpc":"2.0","method":"transform.batch","params":{"stream":1,"fields":[],"rows":[[]]}}`,
-		`{"jsonrpc":"2.0","method":"transform.end","params":{"stream":1}}`,
-	)
-	if err != nil {
-		t.Fatal(err)
+	c := servePipe(t, p)
+	c.write(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}`)
+	c.read()
+	c.write(`{"jsonrpc":"2.0","id":2,"method":"transform.open","params":{"stream":1,"type":"demo.none","config":{},"emitWindow":4}}`)
+	c.read()
+	c.write(`{"jsonrpc":"2.0","method":"transform.batch","params":{"stream":1,"fields":[],"rows":[[]]}}`)
+	m := c.readMethod("transform.emit")
+	params, _ := m["params"].(map[string]any)
+	if fields, ok := params["fields"].([]any); !ok || len(fields) != 0 {
+		t.Errorf("emit = %v, want fields []", m)
 	}
-	for _, m := range answers {
-		if m["method"] != "transform.emit" {
-			continue
-		}
-		params, _ := m["params"].(map[string]any)
-		if fields, ok := params["fields"].([]any); !ok || len(fields) != 0 {
-			t.Errorf("emit = %v, want fields []", m)
-		}
-		return
-	}
-	t.Errorf("no emit in %v", answers)
+	c.write(`{"jsonrpc":"2.0","method":"transform.end","params":{"stream":1}}`)
+	c.readMethod("transform.closed")
+	c.close()
 }
