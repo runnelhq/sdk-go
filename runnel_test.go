@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -306,6 +307,8 @@ func FuzzServe(f *testing.F) {
 		`{"jsonrpc":"2.0","id":2,"method":"action.execute","params":{"type":"demo.echo","config":{"text":"x","times":"3"}}}`)
 	f.Add(`{"jsonrpc":"2.0","method":"$/cancelRequest","params":{"id":[1]}}`)
 	f.Add(`{"id":{},"method":5}`)
+	f.Add(`{"jsonrpc":"2.0","id":1e999,"method":"describe","params":{}}`)
+	f.Add(`{"jsonrpc":"2.0","id":"x\u0000","method":"shutdown","params":{}}`)
 	f.Fuzz(func(t *testing.T, input string) {
 		p := newDemo()
 		var out bytes.Buffer
@@ -317,6 +320,121 @@ func FuzzServe(f *testing.F) {
 			if !json.Valid(sc.Bytes()) {
 				t.Fatalf("invalid answer %q", sc.Text())
 			}
+			// Ids of answers are null, a whole number (int64) or a text (ADR 0019).
+			var m struct {
+				ID json.RawMessage `json:"id"`
+			}
+			if json.Unmarshal(sc.Bytes(), &m) == nil && len(m.ID) > 0 && m.ID[0] != '"' && string(m.ID) != "null" {
+				if _, err := strconv.ParseInt(string(m.ID), 10, 64); err != nil {
+					t.Fatalf("answer with id %s: %q", m.ID, sc.Text())
+				}
+			}
 		}
 	})
+}
+
+// pipeConn serves a plugin on pipes, so that a test sends the next line only after an
+// answer arrived (closing stdin early would end the plugin before it works).
+type pipeConn struct {
+	t    *testing.T
+	in   *io.PipeWriter
+	sc   *bufio.Scanner
+	done chan error
+}
+
+func servePipe(t *testing.T, p *runnel.Plugin) *pipeConn {
+	t.Helper()
+	inR, inW := io.Pipe()
+	outR, outW := io.Pipe()
+	c := &pipeConn{t: t, in: inW, sc: bufio.NewScanner(outR), done: make(chan error, 1)}
+	go func() { c.done <- p.Serve(context.Background(), inR, outW, io.Discard); _ = outW.Close() }()
+	return c
+}
+
+func (c *pipeConn) write(line string) {
+	c.t.Helper()
+	if _, err := io.WriteString(c.in, line+"\n"); err != nil {
+		c.t.Fatal(err)
+	}
+}
+
+func (c *pipeConn) read() map[string]any {
+	c.t.Helper()
+	if !c.sc.Scan() {
+		c.t.Fatalf("no answer: %v", c.sc.Err())
+	}
+	var m map[string]any
+	if err := json.Unmarshal(c.sc.Bytes(), &m); err != nil {
+		c.t.Fatalf("invalid answer %q", c.sc.Text())
+	}
+	return m
+}
+
+// readMethod reads until a message with the method.
+func (c *pipeConn) readMethod(method string) map[string]any {
+	c.t.Helper()
+	for {
+		if m := c.read(); m["method"] == method {
+			return m
+		}
+	}
+}
+
+func (c *pipeConn) close() {
+	c.t.Helper()
+	_ = c.in.Close()
+	go func() {
+		for c.sc.Scan() { // read the rest, so that the plugin does not block on writing
+		}
+	}()
+	if err := <-c.done; err != nil {
+		c.t.Fatal(err)
+	}
+}
+
+// TestCancelTextID cancels a request whose id is a text written differently in both
+// messages (ADR 0019: an id is a whole number or a text). encoding/json of Go 1.26 already
+// unescapes the id; the test keeps that true for other versions.
+func TestCancelTextID(t *testing.T) {
+	c := servePipe(t, newDemo())
+	c.write(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}`)
+	c.read()
+	c.write(`{"jsonrpc":"2.0","id":"a\u0062","method":"action.execute","params":{"type":"demo.echo","config":{"text":"hang"}}}`)
+	c.write(`{"jsonrpc":"2.0","method":"$/cancelRequest","params":{"id":"ab"}}`)
+	if m := c.read(); errorCode(m) != runnel.CodeRequestCancelled || m["id"] != "ab" {
+		t.Errorf("answer = %v, want -32800 for id \"ab\"", m)
+	}
+	c.close()
+}
+
+func TestEmitWithoutFields(t *testing.T) {
+	p := runnel.New("demo", "1.0.0")
+	runnel.AddTransform(p, runnel.Transform[struct{}]{
+		Type: "demo.none", Label: "None", Description: "Emits records without fields",
+		Run: func(ctx context.Context, s *runnel.Stream, _ struct{}) error {
+			for {
+				_, ok, err := s.Next(ctx)
+				if err != nil || !ok {
+					return err
+				}
+				if err := s.Emit(ctx, runnel.ToMain, nil, [][]any{{}}); err != nil {
+					return err
+				}
+			}
+		},
+	})
+	c := servePipe(t, p)
+	c.write(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}`)
+	c.read()
+	c.write(`{"jsonrpc":"2.0","id":2,"method":"transform.open","params":{"stream":1,"type":"demo.none","config":{},"emitWindow":4}}`)
+	c.read()
+	c.write(`{"jsonrpc":"2.0","method":"transform.batch","params":{"stream":1,"fields":[],"rows":[[]]}}`)
+	m := c.readMethod("transform.emit")
+	params, _ := m["params"].(map[string]any)
+	if fields, ok := params["fields"].([]any); !ok || len(fields) != 0 {
+		t.Errorf("emit = %v, want fields []", m)
+	}
+	c.write(`{"jsonrpc":"2.0","method":"transform.end","params":{"stream":1}}`)
+	c.readMethod("transform.closed")
+	c.close()
 }

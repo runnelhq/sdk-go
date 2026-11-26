@@ -383,6 +383,9 @@ func (s *Stream) Emit(ctx context.Context, to string, fields Fields, rows [][]an
 	// fields go with every emit: the protocol allows leaving them out when they did not
 	// change, but Runnel before the fix of runnel#228 reads such an emit as one without
 	// fields.
+	if fields == nil {
+		fields = Fields{} // [] means records without fields; null would mean "as before"
+	}
 	data, err := json.Marshal(emitMessage{JSONRPC: "2.0", Method: "transform.emit", Params: emitParams{Stream: s.id, To: to, Fields: fields, Rows: rows}})
 	if err != nil {
 		return fmt.Errorf("cannot encode the records for %q: %w", to, err)
@@ -581,7 +584,14 @@ func (srv *server) initTransform(ctx context.Context, m message) {
 		return
 	}
 	srv.run(ctx, m.ID, params.Type, func(ctx context.Context) (any, error) {
-		return entry.init(ctx, params.InitInput, params.Config), nil
+		res := entry.init(ctx, params.InitInput, params.Config)
+		if res.Output != nil && res.Output.Fields == nil {
+			// An empty list is [], not null (ADR 0019, Nachtrag 2026-11-26).
+			out := *res.Output
+			out.Fields = Fields{}
+			res.Output = &out
+		}
+		return res, nil
 	})
 }
 
