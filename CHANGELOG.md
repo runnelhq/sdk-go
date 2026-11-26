@@ -2,6 +2,15 @@
 
 ## Unveröffentlicht
 
+- **Behoben:** IDs nach ADR 0019 (Nachtrag 2026-11-26): Eine Anfrage, deren ID weder eine ganze Zahl im Bereich von
+  int64 noch ein Text ist (z. B. `1e999`, `1.5`, `true`, ein Objekt), beantwortet das SDK mit `-32600` und
+  `"id": null`, statt die ID zurückzuschicken. Text-IDs von `$/cancelRequest` finden ihre Anfrage unabhängig von der
+  Schreibweise (`"a\u0062"` = `"ab"`).
+- **Behoben:** Leere Listen gehen als `[]` statt `null` an Runnel: `output.fields` der Antwort auf `transform.init`
+  und `fields` von `Emit` mit `nil`. Dass das SDK `null` von Runnel als leere Liste liest, prüft jetzt ein Transkript.
+
+## v0.2.0 (2026-11-25)
+
 - **Geändert:** Die Kategorie von Actions und Transforms ist optional. Ohne `Category` gibt `describe` keine
   Kategorie mehr an (bisher `general` bzw. `transform`); Runnel zeigt den Baustein dann in einer eigenen Gruppe
   „Plugin: \<name\>“ der Palette (ab runnel#236, ältere Versionen wie bisher unter General bzw. Transform). Wer die

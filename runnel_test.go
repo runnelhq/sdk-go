@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -306,6 +307,8 @@ func FuzzServe(f *testing.F) {
 		`{"jsonrpc":"2.0","id":2,"method":"action.execute","params":{"type":"demo.echo","config":{"text":"x","times":"3"}}}`)
 	f.Add(`{"jsonrpc":"2.0","method":"$/cancelRequest","params":{"id":[1]}}`)
 	f.Add(`{"id":{},"method":5}`)
+	f.Add(`{"jsonrpc":"2.0","id":1e999,"method":"describe","params":{}}`)
+	f.Add(`{"jsonrpc":"2.0","id":"x\u0000","method":"shutdown","params":{}}`)
 	f.Fuzz(func(t *testing.T, input string) {
 		p := newDemo()
 		var out bytes.Buffer
@@ -317,6 +320,92 @@ func FuzzServe(f *testing.F) {
 			if !json.Valid(sc.Bytes()) {
 				t.Fatalf("invalid answer %q", sc.Text())
 			}
+			// Ids of answers are null, a whole number (int64) or a text (ADR 0019).
+			var m struct {
+				ID json.RawMessage `json:"id"`
+			}
+			if json.Unmarshal(sc.Bytes(), &m) == nil && len(m.ID) > 0 && m.ID[0] != '"' && string(m.ID) != "null" {
+				if _, err := strconv.ParseInt(string(m.ID), 10, 64); err != nil {
+					t.Fatalf("answer with id %s: %q", m.ID, sc.Text())
+				}
+			}
 		}
 	})
+}
+
+// TestCancelTextID cancels a request whose id is a text written differently in both
+// messages (ADR 0019: an id is a whole number or a text). encoding/json of Go 1.26 already
+// unescapes the id; the test keeps that true for other versions.
+func TestCancelTextID(t *testing.T) {
+	inR, inW := io.Pipe()
+	outR, outW := io.Pipe()
+	done := make(chan error, 1)
+	go func() { done <- newDemo().Serve(context.Background(), inR, outW, io.Discard); _ = outW.Close() }()
+	write := func(line string) {
+		t.Helper()
+		if _, err := io.WriteString(inW, line+"\n"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sc := bufio.NewScanner(outR)
+	read := func() map[string]any {
+		t.Helper()
+		if !sc.Scan() {
+			t.Fatalf("no answer: %v", sc.Err())
+		}
+		var m map[string]any
+		if err := json.Unmarshal(sc.Bytes(), &m); err != nil {
+			t.Fatalf("invalid answer %q", sc.Text())
+		}
+		return m
+	}
+	write(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}`)
+	read()
+	write(`{"jsonrpc":"2.0","id":"ab","method":"action.execute","params":{"type":"demo.echo","config":{"text":"hang"}}}`)
+	write(`{"jsonrpc":"2.0","method":"$/cancelRequest","params":{"id":"ab"}}`)
+	if m := read(); errorCode(m) != runnel.CodeRequestCancelled || m["id"] != "ab" {
+		t.Errorf("answer = %v, want -32800 for id \"ab\"", m)
+	}
+	_ = inW.Close()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEmitWithoutFields(t *testing.T) {
+	p := runnel.New("demo", "1.0.0")
+	runnel.AddTransform(p, runnel.Transform[struct{}]{
+		Type: "demo.none", Label: "None", Description: "Emits records without fields",
+		Run: func(ctx context.Context, s *runnel.Stream, _ struct{}) error {
+			for {
+				_, ok, err := s.Next(ctx)
+				if err != nil || !ok {
+					return err
+				}
+				if err := s.Emit(ctx, runnel.ToMain, nil, [][]any{{}}); err != nil {
+					return err
+				}
+			}
+		},
+	})
+	answers, err := serveLines(t, p,
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"transform.open","params":{"stream":1,"type":"demo.none","config":{},"emitWindow":4}}`,
+		`{"jsonrpc":"2.0","method":"transform.batch","params":{"stream":1,"fields":[],"rows":[[]]}}`,
+		`{"jsonrpc":"2.0","method":"transform.end","params":{"stream":1}}`,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range answers {
+		if m["method"] != "transform.emit" {
+			continue
+		}
+		params, _ := m["params"].(map[string]any)
+		if fields, ok := params["fields"].([]any); !ok || len(fields) != 0 {
+			t.Errorf("emit = %v, want fields []", m)
+		}
+		return
+	}
+	t.Errorf("no emit in %v", answers)
 }

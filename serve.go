@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"runtime/debug"
+	"strconv"
 	"sync"
 )
 
@@ -184,6 +185,29 @@ func (s *server) fail(id json.RawMessage, code int, msg string) {
 	s.send(map[string]any{"jsonrpc": "2.0", "id": id, "error": rpcError{code, msg}})
 }
 
+// requestID checks the id of a request and writes it in one form, so that the id of
+// $/cancelRequest finds the request: an id is a whole number in the range of int64 or a
+// text (ADR 0019, Nachtrag 2026-11-26). Others, e.g. 1.5, 1e999, true or an object, are
+// not ids.
+func requestID(raw json.RawMessage) (json.RawMessage, bool) {
+	if len(raw) == 0 {
+		return nil, false
+	}
+	if raw[0] == '"' {
+		var text string
+		if json.Unmarshal(raw, &text) != nil {
+			return nil, false
+		}
+		data, err := json.Marshal(text)
+		return data, err == nil
+	}
+	n, err := strconv.ParseInt(string(raw), 10, 64)
+	if err != nil {
+		return nil, false
+	}
+	return strconv.AppendInt(nil, n, 10), true
+}
+
 func (s *server) handle(ctx context.Context, line []byte) {
 	var m message
 	if err := json.Unmarshal(line, &m); err != nil {
@@ -191,6 +215,15 @@ func (s *server) handle(ctx context.Context, line []byte) {
 		return
 	}
 	isRequest := len(m.ID) > 0 && string(m.ID) != "null"
+	if isRequest {
+		id, ok := requestID(m.ID)
+		if !ok {
+			// Not echoed: a strict parser of the host might not read it back (ADR 0019).
+			s.fail(nil, CodeInvalidRequest, "invalid id: an id is a whole number (int64) or a text")
+			return
+		}
+		m.ID = id
+	}
 	if m.Method == "" {
 		if isRequest {
 			return // an answer; Runnel does not answer the plugin
@@ -246,8 +279,12 @@ func (s *server) notification(m message) {
 	if json.Unmarshal(m.Params, &p) != nil {
 		return
 	}
+	id, ok := requestID(p.ID)
+	if !ok {
+		return
+	}
 	s.mu.Lock()
-	cancel := s.running[string(p.ID)]
+	cancel := s.running[string(id)]
 	s.mu.Unlock()
 	if cancel != nil {
 		cancel()
