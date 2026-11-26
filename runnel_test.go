@@ -438,3 +438,36 @@ func TestEmitWithoutFields(t *testing.T) {
 	c.readMethod("transform.closed")
 	c.close()
 }
+
+func TestReferenceMistakesPanic(t *testing.T) {
+	run := func(context.Context, *runnel.Call, struct{}) (any, error) { return nil, nil }
+	tests := map[string]func(p *runnel.Plugin){
+		"records of an action": func(p *runnel.Plugin) {
+			runnel.AddAction(p, runnel.Action[struct{}]{Type: "demo.x", Label: "x", Description: "x", Run: run,
+				Reference: runnel.Reference{Records: "Passes nothing."}})
+		},
+		"action output type": func(p *runnel.Plugin) {
+			runnel.AddAction(p, runnel.Action[struct{}]{Type: "demo.x", Label: "x", Description: "x", Run: run,
+				Reference: runnel.Reference{Outputs: []runnel.OutputField{{Name: "output", Type: "int", Description: "x"}}}})
+		},
+		"transform output type": func(p *runnel.Plugin) {
+			runnel.AddTransform(p, runnel.Transform[struct{}]{Type: "demo.x", Label: "x", Description: "x",
+				Run:       func(context.Context, *runnel.Stream, struct{}) error { return nil },
+				Reference: runnel.Reference{Outputs: []runnel.OutputField{{Name: "f", Type: "integer", Description: "x"}}}})
+		},
+		"output without name": func(p *runnel.Plugin) {
+			runnel.AddAction(p, runnel.Action[struct{}]{Type: "demo.x", Label: "x", Description: "x", Run: run,
+				Reference: runnel.Reference{Outputs: []runnel.OutputField{{Type: "any", Description: "x"}}}})
+		},
+	}
+	for name, fn := range tests {
+		t.Run(name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Error("no panic")
+				}
+			}()
+			fn(runnel.New("demo", "1.0.0"))
+		})
+	}
+}

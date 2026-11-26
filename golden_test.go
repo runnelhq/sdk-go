@@ -41,6 +41,14 @@ func newGolden() *runnel.Plugin {
 	p := runnel.New("golden", "1.0.0")
 	runnel.AddAction(p, runnel.Action[goldenConfig]{
 		Type: "golden.echo", Label: "Echo", Description: "Returns its text", Example: "type: golden.echo\nwith:\n  text: hello\n",
+		Reference: runnel.Reference{
+			Outputs: []runnel.OutputField{
+				{Name: "output.text", Type: "string", Description: "The text, times times"},
+				{Name: "output.host", Type: "string", Description: "Host of the connection server"},
+			},
+			Errors: "Fails when text is fail.",
+			Limits: []string{"times repeats the text at most 1000 times."},
+		},
 		Run: func(_ context.Context, call *runnel.Call, c goldenConfig) (any, error) {
 			switch c.Text {
 			case "fail":
@@ -53,6 +61,11 @@ func newGolden() *runnel.Plugin {
 	})
 	runnel.AddTransform(p, runnel.Transform[goldenFields]{
 		Type: "golden.upper", Label: "Upper", Description: "Writes a field in capitals", RecordErrors: true, Parallel: true,
+		Reference: runnel.Reference{
+			Outputs: []runnel.OutputField{{Name: "<field>", Type: runnel.TypeString, Description: "The value in capitals"}},
+			Records: "Passes every record to the data links; records with the value route go to the target to.",
+			Errors:  "Records with the value bad go to the error link.",
+		},
 		Run: func(ctx context.Context, s *runnel.Stream, c goldenFields) error {
 			for {
 				b, ok, err := s.Next(ctx)
